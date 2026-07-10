@@ -243,7 +243,7 @@ export class TourRoom {
         setup: {
           model: "models/gemini-3.5-live-translate-preview",
           generationConfig: {
-            responseModalities: ["AUDIO"],
+            responseModalities: ["AUDIO", "TEXT"],
             speechConfig: {
               voiceConfig: {
                 prebuiltVoiceConfig: {

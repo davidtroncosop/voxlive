@@ -256,10 +256,17 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
 
       // Schedule playback to avoid stuttering
       const currentTime = audioCtx.currentTime;
+      
+      // Reset nextStartTime if it drifts too far in the future (due to suspended context or network gap)
+      if (nextStartTimeRef.current - currentTime > 0.5) {
+        console.log(`[Visitor] Audio drift detected (${(nextStartTimeRef.current - currentTime).toFixed(3)}s). Resetting audio queue.`);
+        nextStartTimeRef.current = currentTime;
+      }
+
       const startTime = Math.max(nextStartTimeRef.current, currentTime);
       source.start(startTime);
 
-      console.log(`[Visitor] Scheduled audio chunk starting at ${startTime.toFixed(3)}s (current: ${currentTime.toFixed(3)}s, duration: ${buffer.duration.toFixed(3)}s)`);
+      console.log(`[Visitor] Scheduled audio chunk starting at ${startTime.toFixed(3)}s (current: ${currentTime.toFixed(3)}s, duration: ${buffer.duration.toFixed(3)}s, state: ${audioCtx.state})`);
 
       // Update next start time
       nextStartTimeRef.current = startTime + buffer.duration;
