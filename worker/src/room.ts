@@ -62,6 +62,7 @@ export class TourRoom {
 
   async handleConnection(socket: WebSocket, connId: string, role: 'guide' | 'visitor', lang: string) {
     socket.accept();
+    console.log(`[DO Room] New connection: id=${connId}, role=${role}, lang=${lang}`);
 
     // Register connection
     const connInfo: ConnectionInfo = { socket, role, lang };
@@ -114,6 +115,7 @@ export class TourRoom {
     });
 
     socket.addEventListener('close', () => {
+      console.log(`[DO Room] Connection closed: id=${connId}, role=${role}`);
       this.connections.delete(connId);
       if (role === 'guide') {
         this.guideSocket = null;
@@ -170,7 +172,13 @@ export class TourRoom {
 
   // Create or return existing Gemini connection for target language
   async getGeminiConnection(targetLang: string): Promise<GeminiConnection | null> {
-    const apiKey = this.geminiApiKey || this.env.GEMINI_API_KEY;
+    let apiKey = this.geminiApiKey || this.env.GEMINI_API_KEY || '';
+
+    // Ignore the known leaked/blocked API key
+    if (apiKey === 'AIzaSyAwA1QR8t-CwJkbPW3UrokU2bdyxXXWHcg') {
+      apiKey = this.env.GEMINI_API_KEY || '';
+    }
+
     if (!apiKey) {
       console.log("[Gemini DO] No API Key found. Falling back to edge simulator mode.");
       return null;
@@ -441,7 +449,13 @@ export class TourRoom {
 
   // Core Text Translation Engine
   async translateText(text: string, sourceLang: string, targetLang: string): Promise<string> {
-    const apiKey = this.geminiApiKey || this.env.GEMINI_API_KEY;
+    let apiKey = this.geminiApiKey || this.env.GEMINI_API_KEY || '';
+
+    // Ignore the known leaked/blocked API key
+    if (apiKey === 'AIzaSyAwA1QR8t-CwJkbPW3UrokU2bdyxXXWHcg') {
+      apiKey = this.env.GEMINI_API_KEY || '';
+    }
+
     if (apiKey) {
       try {
         console.log(`[Gemini DO] Translating text via Gemini HTTP API: "${text.substring(0, 20)}..."`);

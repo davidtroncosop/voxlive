@@ -22,6 +22,23 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
   const [errorMsg, setErrorMsg] = useState<string>('');
 
   const wsRef = useRef<WebSocket | null>(null);
+
+  const isListeningRef = useRef<boolean>(false);
+  const isMutedRef = useRef<boolean>(false);
+  const selectedLanguageRef = useRef<string>('en');
+
+  // Keep refs in sync with state to avoid stale closure issues in WebSocket callbacks
+  useEffect(() => {
+    isListeningRef.current = isListening;
+  }, [isListening]);
+
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+  }, [isMuted]);
+
+  useEffect(() => {
+    selectedLanguageRef.current = selectedLanguage;
+  }, [selectedLanguage]);
   
   // Web Audio Context for playing back-to-back PCM chunks from Gemini
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -69,6 +86,9 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
       return;
     }
 
+    // Initialize AudioContext immediately on user gesture to prevent autoplay blocks
+    initAudioContext();
+
     setStatus('connecting');
     setErrorMsg('');
     setRoomCode(codeString);
@@ -81,7 +101,6 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
       ws.onopen = () => {
         setStatus('connected');
         setIsListening(true);
-        initAudioContext();
       };
 
       ws.onmessage = (event) => {
@@ -96,9 +115,12 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
           } 
           
           else if (data.type === 'audio_chunk') {
+            console.log("[Visitor] Received audio chunk. Base64 length:", data.data?.length, "SampleRate:", data.sampleRate);
             // Raw PCM audio chunk from Gemini translation
-            if (isListening && !isMuted) {
+            if (isListeningRef.current && !isMutedRef.current) {
               playPcmChunk(data.data, data.sampleRate || 24000);
+            } else {
+              console.log("[Visitor] Audio skipped. isListening:", isListeningRef.current, "isMuted:", isMutedRef.current);
             }
           } 
           
@@ -109,7 +131,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
               timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
               originalText: data.originalText || '',
               translatedText: data.translatedText || data.text || '',
-              languageCode: data.languageCode || selectedLanguage,
+              languageCode: data.languageCode || selectedLanguageRef.current,
               isFinal: data.isFinal !== undefined ? data.isFinal : true
             };
 
@@ -126,8 +148,8 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
 
             // Fallback Text-to-Speech (TTS) in Simulator Mode
             // Triggered if we receive text but NO audio chunks
-            if (!data.hasAudio && isListening && !isMuted && newLine.isFinal && newLine.translatedText) {
-              speakText(newLine.translatedText, selectedLanguage);
+            if (!data.hasAudio && isListeningRef.current && !isMutedRef.current && newLine.isFinal && newLine.translatedText) {
+              speakText(newLine.translatedText, selectedLanguageRef.current);
             }
           }
         } catch (e) {
@@ -196,7 +218,15 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
   const playPcmChunk = (base64Data: string, sampleRate: number) => {
     const audioCtx = audioContextRef.current;
     const gainNode = gainNodeRef.current;
-    if (!audioCtx || !gainNode || audioCtx.state === 'suspended') return;
+    if (!audioCtx || !gainNode) {
+      console.warn("[Visitor] playPcmChunk aborted. AudioContext or GainNode not initialized.");
+      return;
+    }
+
+    // Resume context if browser suspended it
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(e => console.error("Failed to resume AudioContext:", e));
+    }
 
     try {
       // Decode base64
@@ -207,8 +237,9 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
         bytes[i] = binaryString.charCodeAt(i);
       }
 
-      // Convert 16-bit PCM bytes to Float32 array
-      const pcm16 = new Int16Array(bytes.buffer);
+      // Convert 16-bit PCM bytes to Float32 array safely
+      const alignedLength = len - (len % 2);
+      const pcm16 = new Int16Array(bytes.buffer, 0, alignedLength / 2);
       const float32 = new Float32Array(pcm16.length);
       for (let i = 0; i < pcm16.length; i++) {
         float32[i] = pcm16[i] / 32768.0;
@@ -227,6 +258,8 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
       const currentTime = audioCtx.currentTime;
       const startTime = Math.max(nextStartTimeRef.current, currentTime);
       source.start(startTime);
+
+      console.log(`[Visitor] Scheduled audio chunk starting at ${startTime.toFixed(3)}s (current: ${currentTime.toFixed(3)}s, duration: ${buffer.duration.toFixed(3)}s)`);
 
       // Update next start time
       nextStartTimeRef.current = startTime + buffer.duration;
