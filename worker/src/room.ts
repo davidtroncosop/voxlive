@@ -14,7 +14,20 @@ interface GeminiConnection {
   ws: WebSocket;
   isReady: boolean;
   targetLang: string;
+  pendingAudio: Array<{ data: string; sampleRate: number }>;
+  transcriptId: string;
+  outputTranscript: string;
+  closing: boolean;
+  lastOutputAt: number;
 }
+
+const PROTECTED_TERMS = [
+  {
+    canonical: 'Jordan Squair',
+    // Speech recognition commonly interprets the surname as the English noun.
+    aliases: ['Jordan Squair', 'Jordan Square', 'Jordán Squair', 'Jordán Square']
+  }
+] as const;
 
 export class TourRoom {
   state: DurableObjectState;
@@ -25,6 +38,7 @@ export class TourRoom {
   geminiApiKey: string = '';
   // Map of targetLang -> Gemini WebSocket client
   geminiConnections: Map<string, GeminiConnection>;
+  geminiConnectionPromises: Map<string, Promise<GeminiConnection | null>>;
   geminiFailedMap: Set<string>;
 
   constructor(state: DurableObjectState, env: Env) {
@@ -32,6 +46,7 @@ export class TourRoom {
     this.env = env;
     this.connections = new Map();
     this.geminiConnections = new Map();
+    this.geminiConnectionPromises = new Map();
     this.geminiFailedMap = new Set();
   }
 
@@ -84,12 +99,19 @@ export class TourRoom {
           if (data.type === 'config') {
             // Guide configuration: API Key & native language
             if (role === 'guide') {
-              if (data.apiKey) {
-                this.geminiApiKey = data.apiKey;
-                console.log("Gemini API Key configured for room");
+              const nextApiKey = typeof data.apiKey === 'string' ? data.apiKey.trim() : this.geminiApiKey;
+              const nextGuideLang = typeof data.nativeLanguage === 'string' ? data.nativeLanguage : this.guideLang;
+
+              // Live sessions are bound to their target and translation configuration.
+              // Recreate them whenever credentials or the guide language changes.
+              if (nextApiKey !== this.geminiApiKey || nextGuideLang !== this.guideLang) {
+                this.closeAllGemini();
               }
-              if (data.nativeLanguage) {
-                this.guideLang = data.nativeLanguage;
+              this.geminiApiKey = nextApiKey;
+              this.guideLang = nextGuideLang;
+
+              if (this.geminiApiKey) {
+                console.log("Gemini API Key configured for room");
               }
               this.broadcastStatus();
             }
@@ -98,7 +120,7 @@ export class TourRoom {
           else if (data.type === 'audio_chunk') {
             // Guide is sending real-time audio chunk (base64 PCM)
             if (role === 'guide') {
-              await this.handleGuideAudio(data.data);
+              await this.handleGuideAudio(data.data, data.sampleRate);
             }
           } 
           
@@ -153,7 +175,7 @@ export class TourRoom {
     for (const conn of this.connections.values()) {
       try {
         conn.socket.send(statusMsg);
-      } catch (e) {
+      } catch {
         // Active websocket check failure
       }
     }
@@ -163,21 +185,18 @@ export class TourRoom {
   closeAllGemini() {
     for (const gemini of this.geminiConnections.values()) {
       try {
+        gemini.closing = true;
         gemini.ws.close();
-      } catch (e) {}
+      } catch {}
     }
     this.geminiConnections.clear();
+    this.geminiConnectionPromises.clear();
     this.geminiFailedMap.clear();
   }
 
   // Create or return existing Gemini connection for target language
   async getGeminiConnection(targetLang: string): Promise<GeminiConnection | null> {
-    let apiKey = this.geminiApiKey || this.env.GEMINI_API_KEY || '';
-
-    // Ignore the known leaked/blocked API key
-    if (apiKey === 'AIzaSyAwA1QR8t-CwJkbPW3UrokU2bdyxXXWHcg') {
-      apiKey = this.env.GEMINI_API_KEY || '';
-    }
+    const apiKey = this.geminiApiKey || this.env.GEMINI_API_KEY || '';
 
     if (!apiKey) {
       console.log("[Gemini DO] No API Key found. Falling back to edge simulator mode.");
@@ -192,11 +211,25 @@ export class TourRoom {
       return this.geminiConnections.get(targetLang)!;
     }
 
+    const pendingConnection = this.geminiConnectionPromises.get(targetLang);
+    if (pendingConnection) return pendingConnection;
+
+    const connectionPromise = this.createGeminiConnection(targetLang, apiKey);
+    this.geminiConnectionPromises.set(targetLang, connectionPromise);
+    try {
+      return await connectionPromise;
+    } finally {
+      this.geminiConnectionPromises.delete(targetLang);
+    }
+  }
+
+  async createGeminiConnection(targetLang: string, apiKey: string): Promise<GeminiConnection | null> {
+
     try {
       const maskedKey = apiKey.substring(0, 6) + "..." + apiKey.substring(apiKey.length - 4);
       console.log(`[Gemini DO] Connecting to Gemini Live API WebSocket (Key: ${maskedKey}) for translation: ${this.guideLang} -> ${targetLang}`);
       
-      const geminiUrl = `https://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+      const geminiUrl = `https://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`;
       
       const response = await fetch(geminiUrl, {
         headers: {
@@ -210,7 +243,7 @@ export class TourRoom {
         let errorBody = "";
         try {
           errorBody = await response.text();
-        } catch (_) {}
+        } catch {}
         console.error(`[Gemini DO] Gemini Live API connection rejected! Status: ${response.status}, Details: ${errorBody}`);
         this.geminiFailedMap.add(targetLang);
         return null;
@@ -227,38 +260,32 @@ export class TourRoom {
 
       const geminiConn: GeminiConnection = {
         ws: geminiWs,
-        isReady: true,
-        targetLang
+        isReady: false,
+        targetLang,
+        pendingAudio: [],
+        transcriptId: Math.random().toString(36).slice(2),
+        outputTranscript: '',
+        closing: false,
+        lastOutputAt: 0
       };
 
       this.geminiConnections.set(targetLang, geminiConn);
 
       // Send Gemini Setup instruction immediately (Durable Object upgraded WebSocket is already open)
-      const sourceLangFull = this.getLanguageName(this.guideLang);
-      const targetLangFull = this.getLanguageName(targetLang);
-
       console.log(`[Gemini DO] Sending setup config for ${targetLang}...`);
 
       const setupMsg = {
         setup: {
           model: "models/gemini-3.5-live-translate-preview",
           generationConfig: {
-            responseModalities: ["AUDIO", "TEXT"],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: {
-                  voiceName: this.getVoiceForLanguage(targetLang)
-                }
-              }
+            responseModalities: ["AUDIO"],
+            translationConfig: {
+              targetLanguageCode: targetLang,
+              echoTargetLanguage: true
             }
           },
-          systemInstruction: {
-            parts: [
-              {
-                text: `You are an expert tour translator. Translate everything the guide says from ${sourceLangFull} to ${targetLangFull} in real-time. Speak the translation in ${targetLangFull}. Keep the tone professional, natural, and helpful. Output ONLY the translation. Never add your own commentary, explanations, or introductory text. Make sure your translation matches the exact meaning and tone of the original speech.`
-              }
-            ]
-          }
+          inputAudioTranscription: {},
+          outputAudioTranscription: {}
         }
       };
 
@@ -291,28 +318,39 @@ export class TourRoom {
           
           // Log raw structure metadata to debug what Gemini returns
           console.log(`[Gemini DO] Received message from Gemini. Keys: ${Object.keys(responseData).join(", ")}`);
+
+          if (responseData.setupComplete) {
+            geminiConn.isReady = true;
+            console.log(`[Gemini DO] Setup complete for ${targetLang}. Flushing ${geminiConn.pendingAudio.length} queued chunks.`);
+            for (const chunk of geminiConn.pendingAudio) {
+              this.sendGeminiAudio(geminiConn, chunk.data, chunk.sampleRate);
+            }
+            geminiConn.pendingAudio = [];
+          }
+
+          const serverContent = responseData.serverContent;
+          if (serverContent?.outputTranscription?.text) {
+            geminiConn.lastOutputAt = Date.now();
+            geminiConn.outputTranscript += serverContent.outputTranscription.text;
+            this.broadcastToLanguage(targetLang, JSON.stringify({
+              type: 'transcript',
+              id: geminiConn.transcriptId,
+              originalText: serverContent.inputTranscription?.text || '',
+              translatedText: geminiConn.outputTranscript,
+              languageCode: targetLang,
+              isFinal: Boolean(serverContent.turnComplete),
+              hasAudio: true
+            }));
+          }
           
           if (responseData.serverContent?.modelTurn?.parts) {
             const parts = responseData.serverContent.modelTurn.parts;
             console.log(`[Gemini DO] Found ${parts.length} model parts in response.`);
 
             for (const part of parts) {
-              // Check for text transcript
-              if (part.text) {
-                console.log(`[Gemini DO] Text received: "${part.text}"`);
-                this.broadcastToLanguage(targetLang, JSON.stringify({
-                  type: 'transcript',
-                  id: Math.random().toString(),
-                  originalText: '',
-                  translatedText: part.text,
-                  languageCode: targetLang,
-                  isFinal: true,
-                  hasAudio: true
-                }));
-              }
-              
               // Check for audio stream
               if (part.inlineData && part.inlineData.mimeType.startsWith('audio/')) {
+                geminiConn.lastOutputAt = Date.now();
                 const audioLen = part.inlineData.data ? part.inlineData.data.length : 0;
                 console.log(`[Gemini DO] Audio chunk received. MimeType: ${part.inlineData.mimeType}, Size: ${audioLen} chars`);
                 
@@ -324,6 +362,11 @@ export class TourRoom {
               }
             }
           }
+
+          if (serverContent?.turnComplete) {
+            geminiConn.transcriptId = Math.random().toString(36).slice(2);
+            geminiConn.outputTranscript = '';
+          }
         } catch (e) {
           console.error(`[Gemini DO] Error parsing message from Gemini for ${targetLang}:`, e);
         }
@@ -332,11 +375,19 @@ export class TourRoom {
       geminiWs.addEventListener('close', (e) => {
         console.log(`[Gemini DO] WebSocket closed for ${targetLang}. Code: ${e.code}, Reason: ${e.reason}`);
         this.geminiConnections.delete(targetLang);
+        if (!geminiConn.closing) {
+          this.geminiFailedMap.add(targetLang);
+          this.notifyGuideOfLiveFailure(e.reason || `Gemini Live cerró la conexión (código ${e.code}).`);
+        }
       });
 
       geminiWs.addEventListener('error', (e) => {
         console.error(`[Gemini DO] WebSocket error for ${targetLang}:`, e);
         this.geminiConnections.delete(targetLang);
+        if (!geminiConn.closing) {
+          this.geminiFailedMap.add(targetLang);
+          this.notifyGuideOfLiveFailure('No se pudo mantener la conexión con Gemini Live. Se usará la traducción de respaldo.');
+        }
       });
 
       return geminiConn;
@@ -348,8 +399,33 @@ export class TourRoom {
     }
   }
 
+  sendGeminiAudio(connection: GeminiConnection, base64Data: string, sampleRate = 16000) {
+    connection.ws.send(JSON.stringify({
+      realtimeInput: {
+        audio: {
+          mimeType: `audio/pcm;rate=${sampleRate}`,
+          data: base64Data
+        }
+      }
+    }));
+  }
+
+  notifyGuideOfLiveFailure(reason: string) {
+    if (!this.guideSocket) return;
+    const detail = reason.length > 180 ? `${reason.slice(0, 177)}...` : reason;
+    try {
+      this.guideSocket.send(JSON.stringify({
+        type: 'translation_warning',
+        message: `Gemini Live no está disponible: ${detail} Se activó el modo de respaldo.`
+      }));
+    } catch {}
+  }
+
   // Handle raw guide microphone audio
-  async handleGuideAudio(base64Data: string) {
+  async handleGuideAudio(base64Data: string, reportedSampleRate?: number) {
+    const sampleRate = Number.isFinite(reportedSampleRate) && reportedSampleRate! >= 8000 && reportedSampleRate! <= 96000
+      ? Math.round(reportedSampleRate!)
+      : 16000;
     // 1. Check active languages in room
     const targetLanguages = new Set<string>();
     for (const conn of this.connections.values()) {
@@ -367,19 +443,14 @@ export class TourRoom {
         if (this.geminiFailedMap.has(targetLang)) continue;
 
         const gemini = await this.getGeminiConnection(targetLang);
-        if (gemini && gemini.isReady) {
-          // Gemini Live expects chunks in this specific JSON structure:
-          const audioMsg = {
-            realtimeInput: {
-              mediaChunks: [
-                {
-                  mimeType: "audio/pcm",
-                  data: base64Data
-                }
-              ]
-            }
-          };
-          gemini.ws.send(JSON.stringify(audioMsg));
+        if (gemini) {
+          if (gemini.isReady) {
+            this.sendGeminiAudio(gemini, base64Data, sampleRate);
+          } else {
+            // Around six seconds at the browser's current ~128 ms chunk size.
+            gemini.pendingAudio.push({ data: base64Data, sampleRate });
+            if (gemini.pendingAudio.length > 48) gemini.pendingAudio.shift();
+          }
         }
       }
     }
@@ -387,14 +458,16 @@ export class TourRoom {
 
   // Handle Guide's Web Speech STT transcript (Simulator mode and display fallback)
   async handleGuideText(text: string, isFinal: boolean) {
+    const normalizedText = this.normalizeProtectedTerms(text);
+
     // 1. Broadcast the original text back to the guide for display (if final)
     if (isFinal && this.guideSocket) {
       try {
         this.guideSocket.send(JSON.stringify({
           type: 'transcript',
-          text
+          text: normalizedText
         }));
-      } catch (e) {}
+      } catch {}
     }
 
     // 2. Determine target languages in the room
@@ -410,8 +483,17 @@ export class TourRoom {
     const apiKey = this.geminiApiKey || this.env.GEMINI_API_KEY;
     if (isFinal) {
       for (const targetLang of targetLanguages) {
-        // If Gemini Live is set up and working for this language, we skip text-to-speech fallback
-        const isLiveActive = apiKey && this.geminiConnections.has(targetLang) && !this.geminiFailedMap.has(targetLang);
+        // A successful setup is not enough: only suppress the fallback while
+        // Gemini has actually produced output recently. This prevents silent
+        // rooms when Live accepts the session but fails to translate audio.
+        const liveConnection = this.geminiConnections.get(targetLang);
+        const isLiveActive = Boolean(
+          apiKey &&
+          liveConnection?.isReady &&
+          liveConnection.lastOutputAt > 0 &&
+          Date.now() - liveConnection.lastOutputAt < 5000 &&
+          !this.geminiFailedMap.has(targetLang)
+        );
         if (isLiveActive) continue;
 
         if (targetLang === this.guideLang) {
@@ -419,8 +501,8 @@ export class TourRoom {
           this.broadcastToLanguage(targetLang, JSON.stringify({
             type: 'transcript',
             id: Math.random().toString(),
-            originalText: text,
-            translatedText: text,
+            originalText: normalizedText,
+            translatedText: normalizedText,
             languageCode: targetLang,
             isFinal: true,
             hasAudio: false
@@ -430,11 +512,11 @@ export class TourRoom {
 
         // Translate the text!
         try {
-          const translatedText = await this.translateText(text, this.guideLang, targetLang);
+          const translatedText = await this.translateText(normalizedText, this.guideLang, targetLang);
           this.broadcastToLanguage(targetLang, JSON.stringify({
             type: 'transcript',
             id: Math.random().toString(),
-            originalText: text,
+            originalText: normalizedText,
             translatedText,
             languageCode: targetLang,
             isFinal: true,
@@ -449,12 +531,8 @@ export class TourRoom {
 
   // Core Text Translation Engine
   async translateText(text: string, sourceLang: string, targetLang: string): Promise<string> {
-    let apiKey = this.geminiApiKey || this.env.GEMINI_API_KEY || '';
-
-    // Ignore the known leaked/blocked API key
-    if (apiKey === 'AIzaSyAwA1QR8t-CwJkbPW3UrokU2bdyxXXWHcg') {
-      apiKey = this.env.GEMINI_API_KEY || '';
-    }
+    const apiKey = this.geminiApiKey || this.env.GEMINI_API_KEY || '';
+    const { protectedText, placeholders } = this.protectTerms(text);
 
     if (apiKey) {
       try {
@@ -470,7 +548,7 @@ export class TourRoom {
           body: JSON.stringify({
             contents: [{
               parts: [{
-                text: `Translate the following text from ${sourceLangFull} to ${targetLangFull}. Return ONLY the direct translation and nothing else. No introductions, no explanations, no markdown formatting.\n\nText to translate: ${text}`
+                text: `Translate the following text from ${sourceLangFull} to ${targetLangFull}. Return ONLY the direct translation and nothing else. No introductions, no explanations, no markdown formatting. Tokens matching ZXQTERM followed by a number and QXZ are protected proper names: copy those tokens exactly without translating or altering them.\n\nText to translate: ${protectedText}`
               }]
             }]
           })
@@ -481,7 +559,7 @@ export class TourRoom {
           const translated = data.candidates?.[0]?.content?.parts?.[0]?.text;
           if (translated) {
             console.log(`[Gemini DO] Gemini HTTP Translation success: "${translated.trim()}"`);
-            return translated.trim();
+            return this.restoreProtectedTerms(translated.trim(), placeholders);
           }
         } else {
           console.error(`[Gemini DO] Gemini HTTP Translation rejected. Status: ${res.status}`);
@@ -495,12 +573,12 @@ export class TourRoom {
     if (this.env.AI) {
       try {
         const response = await this.env.AI.run('@cf/meta/m2m100-1.2b', {
-          text: text,
+          text: protectedText,
           source_lang: sourceLang,
           target_lang: targetLang
         });
         if (response?.translated_text) {
-          return response.translated_text;
+          return this.restoreProtectedTerms(response.translated_text, placeholders);
         }
       } catch (e) {
         console.error("Cloudflare AI translation failed, trying fallback:", e);
@@ -509,11 +587,11 @@ export class TourRoom {
 
     // Attempt 2: MyMemory Translation API (Free public API, no API key needed)
     try {
-      const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`;
+      const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(protectedText)}&langpair=${sourceLang}|${targetLang}`;
       const res = await fetch(url);
       const data: any = await res.json();
       if (data.responseData?.translatedText) {
-        return data.responseData.translatedText;
+        return this.restoreProtectedTerms(data.responseData.translatedText, placeholders);
       }
     } catch (e) {
       console.error("MyMemory translation failed:", e);
@@ -523,13 +601,56 @@ export class TourRoom {
     return `[Translated to ${targetLang}]: ${text}`;
   }
 
+  normalizeProtectedTerms(text: string): string {
+    let normalized = text;
+    for (const term of PROTECTED_TERMS) {
+      for (const alias of term.aliases) {
+        normalized = normalized.replace(new RegExp(this.escapeRegExp(alias), 'gi'), term.canonical);
+      }
+    }
+    return normalized;
+  }
+
+  protectTerms(text: string): {
+    protectedText: string;
+    placeholders: Map<string, string>;
+  } {
+    let protectedText = this.normalizeProtectedTerms(text);
+    const placeholders = new Map<string, string>();
+
+    PROTECTED_TERMS.forEach((term, index) => {
+      const placeholder = `ZXQTERM${index}QXZ`;
+      const pattern = new RegExp(this.escapeRegExp(term.canonical), 'gi');
+      if (pattern.test(protectedText)) {
+        placeholders.set(placeholder, term.canonical);
+        protectedText = protectedText.replace(pattern, placeholder);
+      }
+    });
+
+    return { protectedText, placeholders };
+  }
+
+  restoreProtectedTerms(text: string, placeholders: Map<string, string>): string {
+    let restored = text;
+    for (const [placeholder, canonical] of placeholders) {
+      // Some translation engines insert spaces around alphanumeric tokens.
+      const flexiblePlaceholder = placeholder.split('').map(char => this.escapeRegExp(char)).join('\\s*');
+      restored = restored.replace(new RegExp(flexiblePlaceholder, 'gi'), canonical);
+    }
+    return restored;
+  }
+
+  escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
   // Broadcast data ONLY to visitors listening in a specific language
   broadcastToLanguage(lang: string, message: string) {
     for (const conn of this.connections.values()) {
       if (conn.role === 'visitor' && conn.lang === lang) {
         try {
           conn.socket.send(message);
-        } catch (e) {
+        } catch {
           // Socket write failure
         }
       }

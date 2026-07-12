@@ -26,6 +26,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
   const processorNodeRef = useRef<ScriptProcessorNode | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const recognitionRef = useRef<any>(null); // For local Web Speech STT (fallback and transcript display)
+  const isRecordingRef = useRef<boolean>(false);
 
   // Load API Key from local storage
   const handleSaveApiKey = () => {
@@ -72,6 +73,8 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
           const data = JSON.parse(event.data);
           if (data.type === 'status_update') {
             setActiveListeners(data.listenersCount || 0);
+          } else if (data.type === 'translation_warning') {
+            setErrorMsg(data.message || 'Gemini Live no está disponible. Se activó el modo de respaldo.');
           } else if (data.type === 'transcript') {
             // Live transcription returned from server (or Gemini)
             setTranscripts(prev => [
@@ -129,6 +132,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({
         sampleRate: 16000
       });
+      await audioCtx.resume();
       audioContextRef.current = audioCtx;
 
       const source = audioCtx.createMediaStreamSource(stream);
@@ -170,12 +174,14 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
           // Send audio chunk
           wsRef.current.send(JSON.stringify({
             type: 'audio_chunk',
-            data: base64
+            data: base64,
+            sampleRate: audioCtx.sampleRate
           }));
         }
       };
 
       // Set up local Speech Recognition for real-time visualization and text broadcast
+      isRecordingRef.current = true;
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (SpeechRecognition) {
         const recognition = new SpeechRecognition();
@@ -223,10 +229,10 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
 
         recognition.onend = () => {
           // Restart recognition if recording is still active
-          if (isRecording && recognitionRef.current) {
+          if (isRecordingRef.current && recognitionRef.current === recognition) {
             try {
-              recognitionRef.current.start();
-            } catch (e) {
+              recognition.start();
+            } catch {
               // Ignore if already started
             }
           }
@@ -247,6 +253,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
 
   // Stop recording
   const stopAudioRecording = () => {
+    isRecordingRef.current = false;
     if (processorNodeRef.current) {
       processorNodeRef.current.disconnect();
       processorNodeRef.current = null;
@@ -389,6 +396,13 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
                   Código de sala: <span className="room-code-value">{roomCode}</span>
                 </div>
               </div>
+
+              {errorMsg && (
+                <div className="connection-banner" style={{ marginBottom: '20px' }}>
+                  <AlertCircle size={16} />
+                  <span>{errorMsg}</span>
+                </div>
+              )}
 
               <div className="action-box">
                 <button 
