@@ -13,7 +13,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSelectRole }) => {
         Voxlive
       </div>
       <div className="landing-subtitle">
-        Rompiendo la barrera del idioma en tus recorridos turísticos con traducción de voz a voz en tiempo real impulsada por Cloudflare Edge y Gemini AI.
+        Traducción de voz a voz en tiempo real para conversaciones, presentaciones y eventos, impulsada por Cloudflare Edge y Gemini AI.
       </div>
 
       <div className="role-grid">
@@ -21,9 +21,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSelectRole }) => {
           <div className="role-card-icon">
             <Mic size={40} />
           </div>
-          <h2 className="role-card-title">Soy el Guía</h2>
+          <h2 className="role-card-title">Quiero Transmitir</h2>
           <p className="role-card-desc">
-            Inicia un recorrido, crea una sala de transmisión y habla de forma natural en tu propio idioma.
+            Crea una sala de transmisión y habla de forma natural en tu propio idioma.
           </p>
         </div>
 
@@ -31,9 +31,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSelectRole }) => {
           <div className="role-card-icon">
             <Headphones size={40} />
           </div>
-          <h2 className="role-card-title">Soy un Turista</h2>
+          <h2 className="role-card-title">Quiero Escuchar</h2>
           <p className="role-card-desc">
-            Únete a un recorrido ingresando el código de la sala y escucha la explicación traducida al instante.
+            Únete a una sesión con el código de la sala y escucha el audio traducido al instante.
           </p>
         </div>
       </div>
@@ -67,7 +67,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSelectRole }) => {
           <div className="glass-card" style={{ padding: '20px', borderRadius: 'var(--radius-md)' }}>
             <h4 style={{ fontSize: '15px', fontWeight: 700, marginBottom: '8px', color: 'var(--color-secondary)' }}>Durable Objects & WebSockets</h4>
             <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', lineHeight: '1.4' }}>
-              Coordinación en tiempo real del estado de la sala (guías, turistas e idiomas) y flujo de audio continuo sin retrasos.
+              Coordinación en tiempo real del estado de la sala (emisores, oyentes e idiomas) y flujo de audio continuo sin retrasos.
             </p>
           </div>
           <div className="glass-card" style={{ padding: '20px', borderRadius: 'var(--radius-md)' }}>

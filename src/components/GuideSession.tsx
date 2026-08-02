@@ -2,6 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Mic, MicOff, Users, ArrowLeft, Settings, Sparkles, CheckCircle2, AlertCircle } from 'lucide-react';
 import { SUPPORTED_LANGUAGES } from '../types';
 import type { ConnectionStatus } from '../types';
+import {
+  TRANSLATION_PROVIDER_OPTIONS,
+  isTranslationProvider,
+} from '../../shared/translationProvider';
+import type { TranslationProvider } from '../../shared/translationProvider';
 import Visualizer from './Visualizer';
 
 interface GuideSessionProps {
@@ -17,7 +22,12 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
   const [transcripts, setTranscripts] = useState<{ id: string; text: string; timestamp: string }[]>([]);
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const [geminiApiKey, setGeminiApiKey] = useState<string>(() => localStorage.getItem('gemini_api_key') || '');
-  const [selectedLanguage, setSelectedLanguage] = useState<string>('es'); // Native language of guide
+  const [translationProvider, setTranslationProvider] = useState<TranslationProvider>(() => {
+    const savedProvider = localStorage.getItem('translation_provider');
+    return isTranslationProvider(savedProvider) ? savedProvider : 'gemini';
+  });
+  const [providerReady, setProviderReady] = useState<boolean | null>(null);
+  const [selectedLanguage, setSelectedLanguage] = useState<string>('en'); // Native language of guide
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [dbLevel, setDbLevel] = useState<number>(0);
 
@@ -28,23 +38,41 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
   const recognitionRef = useRef<any>(null); // For local Web Speech STT (fallback and transcript display)
   const isRecordingRef = useRef<boolean>(false);
 
+  const sendConfiguration = (ws: WebSocket, provider = translationProvider) => {
+    ws.send(JSON.stringify({
+      type: 'config',
+      provider,
+      // OpenAI credentials stay in the Worker environment and are never sent by the browser.
+      apiKey: provider === 'gemini' ? geminiApiKey : '',
+      nativeLanguage: selectedLanguage,
+    }));
+  };
+
+  const handleProviderChange = (provider: TranslationProvider) => {
+    setTranslationProvider(provider);
+    localStorage.setItem('translation_provider', provider);
+    setProviderReady(null);
+    setErrorMsg('');
+
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      sendConfiguration(wsRef.current, provider);
+    }
+  };
+
   // Load API Key from local storage
   const handleSaveApiKey = () => {
     localStorage.setItem('gemini_api_key', geminiApiKey);
     setShowSettings(false);
     // Send API Key to active websocket if connected
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        type: 'config',
-        apiKey: geminiApiKey,
-        nativeLanguage: selectedLanguage
-      }));
+      sendConfiguration(wsRef.current);
     }
   };
 
   // Create room and initialize WebSocket
   const startSession = async () => {
     setStatus('connecting');
+    setProviderReady(null);
     setErrorMsg('');
     try {
       // Generate a random room code or let Cloudflare Worker assign one
@@ -61,11 +89,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
       ws.onopen = () => {
         setStatus('connected');
         // Send initial configurations
-        ws.send(JSON.stringify({
-          type: 'config',
-          apiKey: geminiApiKey,
-          nativeLanguage: selectedLanguage
-        }));
+        sendConfiguration(ws);
       };
 
       ws.onmessage = (event) => {
@@ -73,8 +97,17 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
           const data = JSON.parse(event.data);
           if (data.type === 'status_update') {
             setActiveListeners(data.listenersCount || 0);
+          } else if (data.type === 'provider_status') {
+            const ready = Boolean(data.configured);
+            setProviderReady(ready);
+            if (!ready) {
+              setErrorMsg(data.message || 'El motor seleccionado no tiene una API key configurada en el servidor.');
+            } else {
+              setErrorMsg('');
+            }
           } else if (data.type === 'translation_warning') {
-            setErrorMsg(data.message || 'Gemini Live no está disponible. Se activó el modo de respaldo.');
+            setProviderReady(false);
+            setErrorMsg(data.message || 'El motor de traducción no está disponible. Se activó el modo de respaldo.');
           } else if (data.type === 'transcript') {
             // Live transcription returned from server (or Gemini)
             setTranscripts(prev => [
@@ -119,6 +152,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
     setStatus('idle');
     setRoomCode('');
     setActiveListeners(0);
+    setProviderReady(null);
     setTranscripts([]);
   };
 
@@ -303,7 +337,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
         <div className="settings-overlay">
           <div className="settings-modal">
             <div className="settings-modal-header">
-              <span className="settings-modal-title">Configuración del Guía</span>
+              <span className="settings-modal-title">Configuración del Emisor</span>
             </div>
             <div className="settings-modal-body">
               <div className="form-group">
@@ -316,7 +350,13 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
                   onChange={(e) => setGeminiApiKey(e.target.value)}
                 />
                 <span className="form-desc">
-                  Para utilizar la traducción de voz a voz con Gemini Multimodal Live. Si se deja en blanco, la aplicación se ejecutará en **modo simulador** (Speech recognition + Edge text translation + TTS del visitante).
+                  Solo se utiliza al seleccionar Gemini. Si se deja en blanco, el Worker intentará usar su secreto GEMINI_API_KEY.
+                </span>
+              </div>
+              <div className="form-group">
+                <label className="form-label">API Key de OpenAI</label>
+                <span className="form-desc">
+                  Se lee exclusivamente desde OPENAI_API_KEY en el backend. La clave no se guarda ni se envía al navegador.
                 </span>
               </div>
             </div>
@@ -347,7 +387,24 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
           )}
 
           <div className="form-group" style={{ marginBottom: '24px', textAlign: 'left' }}>
-            <label className="form-label">Tu Idioma Nativo (Guía)</label>
+            <label className="form-label">Motor de traducción</label>
+            <select
+              className="glass-input glass-select"
+              value={translationProvider}
+              onChange={(e) => handleProviderChange(e.target.value as TranslationProvider)}
+              disabled={status === 'connecting'}
+            >
+              {TRANSLATION_PROVIDER_OPTIONS.map((provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.name} — {provider.model}
+                </option>
+              ))}
+            </select>
+            <span className="form-desc">Puedes cambiarlo dentro de la sala para comparar el mismo idioma.</span>
+          </div>
+
+          <div className="form-group" style={{ marginBottom: '24px', textAlign: 'left' }}>
+            <label className="form-label">Tu Idioma de Origen</label>
             <select
               className="glass-input glass-select"
               value={selectedLanguage}
@@ -390,7 +447,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
               <div className="panel-header">
                 <div className="panel-title">
                   <Mic size={24} style={{ color: isRecording ? 'var(--color-danger)' : 'var(--color-primary)' }} />
-                  Panel del Guía
+                  Panel de Transmisión
                 </div>
                 <div className="room-code-tag">
                   Código de sala: <span className="room-code-value">{roomCode}</span>
@@ -416,7 +473,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
                 </div>
                 <p style={{ color: 'var(--color-text-secondary)', fontSize: '14px', maxWidth: '360px' }}>
                   {isRecording 
-                    ? 'Habla de forma natural. Los visitantes escucharán la traducción en tiempo real.' 
+                    ? 'Habla de forma natural. Los oyentes recibirán la traducción en tiempo real.'
                     : 'Haz clic en el micrófono para empezar a hablar.'}
                 </p>
 
@@ -493,13 +550,28 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
 
               <div className="status-row">
                 <span className="status-label">API de IA</span>
-                <span className="status-val">
-                  {geminiApiKey ? 'Gemini 3.5 Live Translate' : 'Edge Simulator'}
+                <span className="status-val" style={{ color: providerReady === false ? 'var(--color-danger)' : undefined }}>
+                  {translationProvider === 'openai' ? 'GPT Realtime Translate' : 'Gemini 3.5 Live Translate'}
                 </span>
               </div>
 
+              <div className="status-row" style={{ alignItems: 'flex-start' }}>
+                <label className="status-label" htmlFor="active-translation-provider">Comparar motor</label>
+                <select
+                  id="active-translation-provider"
+                  className="glass-input glass-select"
+                  value={translationProvider}
+                  onChange={(e) => handleProviderChange(e.target.value as TranslationProvider)}
+                  style={{ width: '190px', padding: '8px 30px 8px 10px', fontSize: '12px' }}
+                >
+                  {TRANSLATION_PROVIDER_OPTIONS.map((provider) => (
+                    <option key={provider.id} value={provider.id}>{provider.name}</option>
+                  ))}
+                </select>
+              </div>
+
               <div className="status-row">
-                <span className="status-label">Visitantes Conectados</span>
+                <span className="status-label">Oyentes Conectados</span>
                 <span className="status-val" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <Users size={16} /> {activeListeners}
                 </span>
@@ -517,14 +589,14 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
                 onClick={stopSession}
                 style={{ width: '100%', marginTop: '8px' }}
               >
-                Terminar Recorrido
+                Finalizar Sesión
               </button>
             </div>
 
             <div className="glass-card" style={{ padding: '20px' }}>
-              <h4 style={{ fontFamily: 'var(--font-heading)', fontSize: '15px', fontWeight: 600, marginBottom: '12px' }}>¿Cómo invitar turistas?</h4>
+              <h4 style={{ fontFamily: 'var(--font-heading)', fontSize: '15px', fontWeight: 600, marginBottom: '12px' }}>¿Cómo invitar oyentes?</h4>
               <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', lineHeight: '1.5' }}>
-                Comparte el código <strong style={{ color: 'var(--color-secondary)', fontSize: '16px' }}>{roomCode}</strong> con tus clientes. Indícales que accedan a esta web, seleccionen "Soy un Turista", e introduzcan el código.
+                Comparte el código <strong style={{ color: 'var(--color-secondary)', fontSize: '16px' }}>{roomCode}</strong> con los participantes. Indícales que accedan a esta web, seleccionen "Quiero Escuchar" e introduzcan el código.
               </p>
             </div>
           </div>

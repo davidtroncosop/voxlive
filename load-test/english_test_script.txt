@@ -1,0 +1,5 @@
+Good morning, and welcome to this live translation test for Voxlive. Today we are evaluating whether a large audience can receive clear Spanish audio at the same time. The system should preserve names, numbers, pauses, and changes in speaking rhythm without losing any part of the message.
+
+During this test, please imagine that you are attending a university presentation. The speaker may explain a research project, introduce several guests, and share practical information with the audience. The doors will open at nine thirty in the morning, the first session will begin at ten, and the final discussion will take place after lunch.
+
+Reliable communication is especially important when hundreds of people depend on the same wireless network. We are measuring connection stability, audio delivery, network delay, and missing audio frames. This recording will repeat for the duration of the test so that every simulated listener receives a continuous and realistic English voice stream.

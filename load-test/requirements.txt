@@ -1,0 +1,2 @@
+certifi>=2025.1.31
+websockets>=13,<17

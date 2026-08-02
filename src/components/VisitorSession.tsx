@@ -2,7 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Headphones, Volume2, VolumeX, ArrowLeft, Users, Globe, Play, Square, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { SUPPORTED_LANGUAGES } from '../types';
 import type { ConnectionStatus, TranscriptLine } from '../types';
+import { base64ToBytes, decodeAudioFrame } from '../../shared/audioProtocol';
 import Visualizer from './Visualizer';
+
+const JITTER_BUFFER_SECONDS = 0.12;
+const MAX_QUEUED_AUDIO_SECONDS = 0.75;
+const RECONNECT_MAX_DELAY_MS = 10_000;
+const HEARTBEAT_INTERVAL_MS = 15_000;
+const HEARTBEAT_TIMEOUT_MS = 40_000;
 
 interface VisitorSessionProps {
   onBack: () => void;
@@ -12,7 +19,7 @@ interface VisitorSessionProps {
 export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl }) => {
   const [status, setStatus] = useState<ConnectionStatus>('idle');
   const [roomCode, setRoomCode] = useState<string>('');
-  const [selectedLanguage, setSelectedLanguage] = useState<string>('en'); // Default to English
+  const [selectedLanguage, setSelectedLanguage] = useState<string>('es'); // Default to Spanish
   const [isListening, setIsListening] = useState<boolean>(false);
   const [volume, setVolume] = useState<number>(80);
   const [isMuted, setIsMuted] = useState<boolean>(false);
@@ -20,12 +27,28 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
   const [listenersCount, setListenersCount] = useState<number>(0);
   const [guideLang, setGuideLang] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
+  const [hasJoined, setHasJoined] = useState<boolean>(false);
+  const [reconnectAttempt, setReconnectAttempt] = useState<number>(0);
 
   const wsRef = useRef<WebSocket | null>(null);
 
   const isListeningRef = useRef<boolean>(false);
   const isMutedRef = useRef<boolean>(false);
-  const selectedLanguageRef = useRef<string>('en');
+  const selectedLanguageRef = useRef<string>('es');
+  const lastAudioSequenceRef = useRef<number | null>(null);
+  const droppedAudioChunksRef = useRef<number>(0);
+  const roomCodeRef = useRef<string>('');
+  const shouldReconnectRef = useRef<boolean>(false);
+  const hasConnectedOnceRef = useRef<boolean>(false);
+  const reconnectAttemptRef = useRef<number>(0);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const heartbeatTimerRef = useRef<number | null>(null);
+  const lastPongAtRef = useRef<number>(0);
+  const clientIdRef = useRef<string>('');
+
+  if (!clientIdRef.current) {
+    clientIdRef.current = crypto.randomUUID?.() || Math.random().toString(36).slice(2);
+  }
 
   // Keep refs in sync with state to avoid stale closure issues in WebSocket callbacks
   useEffect(() => {
@@ -79,33 +102,102 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
 
   const codeString = codeDigits.join('');
 
-  // Connect to the room
-  const joinRoom = () => {
-    if (codeString.length < 4) {
-      setErrorMsg('Por favor ingresa un código de 4 dígitos.');
-      return;
+  const stopHeartbeat = () => {
+    if (heartbeatTimerRef.current !== null) {
+      window.clearInterval(heartbeatTimerRef.current);
+      heartbeatTimerRef.current = null;
     }
+  };
 
-    // Initialize AudioContext immediately on user gesture to prevent autoplay blocks
-    initAudioContext();
+  const startHeartbeat = (ws: WebSocket) => {
+    stopHeartbeat();
+    lastPongAtRef.current = Date.now();
+    heartbeatTimerRef.current = window.setInterval(() => {
+      if (wsRef.current !== ws || ws.readyState !== WebSocket.OPEN) return;
+      if (Date.now() - lastPongAtRef.current > HEARTBEAT_TIMEOUT_MS) {
+        ws.close(4000, 'Heartbeat timeout');
+        return;
+      }
+      ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
+    }, HEARTBEAT_INTERVAL_MS);
+  };
 
+  const clearReconnectTimer = () => {
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  };
+
+  const resetPlaybackQueue = () => {
+    nextStartTimeRef.current = 0;
+    lastAudioSequenceRef.current = null;
+  };
+
+  const scheduleReconnect = () => {
+    clearReconnectTimer();
+    const attempt = reconnectAttemptRef.current + 1;
+    reconnectAttemptRef.current = attempt;
+    setReconnectAttempt(attempt);
+    const delay = Math.min(1000 * 2 ** Math.min(attempt - 1, 4), RECONNECT_MAX_DELAY_MS);
     setStatus('connecting');
-    setErrorMsg('');
-    setRoomCode(codeString);
+    setErrorMsg(`Conexión interrumpida. Reconectando automáticamente (intento ${attempt})...`);
 
+    reconnectTimerRef.current = window.setTimeout(() => {
+      reconnectTimerRef.current = null;
+      if (shouldReconnectRef.current && roomCodeRef.current) {
+        connectToRoom(roomCodeRef.current, selectedLanguageRef.current, true);
+      }
+    }, delay);
+  };
+
+  const connectToRoom = (code: string, language: string, isReconnect: boolean) => {
     try {
-      const socketUrl = `${wsUrl}/ws/room/${codeString}?role=visitor&lang=${selectedLanguage}`;
+      const socketUrl = `${wsUrl}/ws/room/${code}?role=visitor&lang=${language}&audio=binary&client=${encodeURIComponent(clientIdRef.current)}`;
       const ws = new WebSocket(socketUrl);
+      ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
 
       ws.onopen = () => {
+        if (wsRef.current !== ws) return;
+        const firstConnection = !hasConnectedOnceRef.current;
+        hasConnectedOnceRef.current = true;
+        reconnectAttemptRef.current = 0;
+        setReconnectAttempt(0);
+        setHasJoined(true);
         setStatus('connected');
-        setIsListening(true);
+        setErrorMsg('');
+        resetPlaybackQueue();
+        startHeartbeat(ws);
+        if (firstConnection && !isReconnect) setIsListening(true);
+        audioContextRef.current?.resume().catch(() => {
+          setErrorMsg('Toca “Escuchar” para reanudar el audio.');
+        });
       };
 
       ws.onmessage = (event) => {
         try {
+          if (event.data instanceof ArrayBuffer) {
+            const audioFrame = decodeAudioFrame(event.data);
+            trackAudioSequence(audioFrame.sequence);
+
+            if (isListeningRef.current && !isMutedRef.current) {
+              playPcmBytes(audioFrame.pcmBytes, audioFrame.sampleRate);
+            }
+            return;
+          }
+
+          if (typeof event.data !== 'string') {
+            console.warn('[Listener] Ignoring unsupported WebSocket message.');
+            return;
+          }
+
           const data = JSON.parse(event.data);
+
+          if (data.type === 'pong') {
+            lastPongAtRef.current = Date.now();
+            return;
+          }
           
           if (data.type === 'status_update') {
             setListenersCount(data.listenersCount || 0);
@@ -115,12 +207,10 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
           } 
           
           else if (data.type === 'audio_chunk') {
-            console.log("[Visitor] Received audio chunk. Base64 length:", data.data?.length, "SampleRate:", data.sampleRate);
-            // Raw PCM audio chunk from Gemini translation
+            // Compatibility path while an older worker deployment is still active.
+            if (typeof data.sequence === 'number') trackAudioSequence(data.sequence);
             if (isListeningRef.current && !isMutedRef.current) {
-              playPcmChunk(data.data, data.sampleRate || 24000);
-            } else {
-              console.log("[Visitor] Audio skipped. isListening:", isListeningRef.current, "isMuted:", isMutedRef.current);
+              playPcmBytes(base64ToBytes(data.data), data.sampleRate || 24000);
             }
           } 
           
@@ -159,30 +249,73 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
 
       ws.onerror = (e) => {
         console.error("WebSocket error:", e);
-        setStatus('error');
-        setErrorMsg('No se pudo conectar a la sala. Verifica el código.');
       };
 
       ws.onclose = () => {
-        setStatus('disconnected');
-        setIsListening(false);
-        closeAudioContext();
+        if (wsRef.current !== ws) return;
+        wsRef.current = null;
+        stopHeartbeat();
+        resetPlaybackQueue();
+
+        if (shouldReconnectRef.current && hasConnectedOnceRef.current) {
+          scheduleReconnect();
+        } else {
+          setStatus('error');
+          setErrorMsg('No se pudo conectar a la sala. Verifica el código.');
+          closeAudioContext();
+        }
       };
 
     } catch (e) {
       console.error(e);
-      setStatus('error');
-      setErrorMsg('Ocurrió un error en la conexión.');
+      if (shouldReconnectRef.current && hasConnectedOnceRef.current) {
+        scheduleReconnect();
+      } else {
+        setStatus('error');
+        setErrorMsg('Ocurrió un error en la conexión.');
+        closeAudioContext();
+      }
     }
   };
 
+  // Connect to the room
+  const joinRoom = () => {
+    if (codeString.length < 4) {
+      setErrorMsg('Por favor ingresa un código de 4 dígitos.');
+      return;
+    }
+
+    // Initialize AudioContext immediately on user gesture to prevent autoplay blocks
+    initAudioContext();
+    clearReconnectTimer();
+    shouldReconnectRef.current = true;
+    hasConnectedOnceRef.current = false;
+    reconnectAttemptRef.current = 0;
+    roomCodeRef.current = codeString;
+    setReconnectAttempt(0);
+    setHasJoined(false);
+    setStatus('connecting');
+    setErrorMsg('');
+    setRoomCode(codeString);
+    connectToRoom(codeString, selectedLanguage, false);
+  };
+
   const leaveRoom = () => {
+    shouldReconnectRef.current = false;
+    hasConnectedOnceRef.current = false;
+    roomCodeRef.current = '';
+    clearReconnectTimer();
+    stopHeartbeat();
     if (wsRef.current) {
+      wsRef.current.onclose = null;
       wsRef.current.close();
+      wsRef.current = null;
     }
     closeAudioContext();
     window.speechSynthesis.cancel();
     setStatus('idle');
+    setHasJoined(false);
+    setReconnectAttempt(0);
     setCodeDigits(['', '', '', '']);
     setRoomCode('');
     setTranscripts([]);
@@ -212,14 +345,30 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
       audioContextRef.current = null;
       gainNodeRef.current = null;
     }
+    nextStartTimeRef.current = 0;
+    lastAudioSequenceRef.current = null;
+    droppedAudioChunksRef.current = 0;
   };
 
-  // Play raw PCM base64 string
-  const playPcmChunk = (base64Data: string, sampleRate: number) => {
+  const trackAudioSequence = (sequence: number) => {
+    const previous = lastAudioSequenceRef.current;
+    if (previous !== null) {
+      const expected = (previous + 1) >>> 0;
+      const missing = (sequence - expected) >>> 0;
+      if (sequence !== expected && missing < 0x80000000) {
+        droppedAudioChunksRef.current += missing;
+        console.warn(`[Listener] Missing ${missing} audio chunk(s); total=${droppedAudioChunksRef.current}.`);
+      }
+    }
+    lastAudioSequenceRef.current = sequence;
+  };
+
+  // Schedule little-endian PCM16 with a small lead time to absorb network jitter.
+  const playPcmBytes = (bytes: Uint8Array, sampleRate: number) => {
     const audioCtx = audioContextRef.current;
     const gainNode = gainNodeRef.current;
     if (!audioCtx || !gainNode) {
-      console.warn("[Visitor] playPcmChunk aborted. AudioContext or GainNode not initialized.");
+      console.warn('[Listener] Audio playback skipped because AudioContext is unavailable.');
       return;
     }
 
@@ -229,17 +378,9 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
     }
 
     try {
-      // Decode base64
-      const binaryString = atob(base64Data);
-      const len = binaryString.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-
       // Convert 16-bit PCM bytes to Float32 array safely
-      const alignedLength = len - (len % 2);
-      const pcm16 = new Int16Array(bytes.buffer, 0, alignedLength / 2);
+      const alignedLength = bytes.byteLength - (bytes.byteLength % 2);
+      const pcm16 = new Int16Array(bytes.buffer, bytes.byteOffset, alignedLength / 2);
       const float32 = new Float32Array(pcm16.length);
       for (let i = 0; i < pcm16.length; i++) {
         float32[i] = pcm16[i] / 32768.0;
@@ -257,16 +398,13 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
       // Schedule playback to avoid stuttering
       const currentTime = audioCtx.currentTime;
       
-      // Reset nextStartTime if it drifts too far in the future (due to suspended context or network gap)
-      if (nextStartTimeRef.current - currentTime > 0.5) {
-        console.log(`[Visitor] Audio drift detected (${(nextStartTimeRef.current - currentTime).toFixed(3)}s). Resetting audio queue.`);
-        nextStartTimeRef.current = currentTime;
+      const queuedSeconds = nextStartTimeRef.current - currentTime;
+      if (queuedSeconds <= 0 || queuedSeconds > MAX_QUEUED_AUDIO_SECONDS) {
+        nextStartTimeRef.current = currentTime + JITTER_BUFFER_SECONDS;
       }
 
-      const startTime = Math.max(nextStartTimeRef.current, currentTime);
+      const startTime = nextStartTimeRef.current;
       source.start(startTime);
-
-      console.log(`[Visitor] Scheduled audio chunk starting at ${startTime.toFixed(3)}s (current: ${currentTime.toFixed(3)}s, duration: ${buffer.duration.toFixed(3)}s, state: ${audioCtx.state})`);
 
       // Update next start time
       nextStartTimeRef.current = startTime + buffer.duration;
@@ -312,9 +450,13 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
   // Clean up
   useEffect(() => {
     return () => {
+      shouldReconnectRef.current = false;
+      clearReconnectTimer();
+      stopHeartbeat();
       closeAudioContext();
       window.speechSynthesis.cancel();
       if (wsRef.current) {
+        wsRef.current.onclose = null;
         wsRef.current.close();
       }
     };
@@ -322,14 +464,14 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
 
   return (
     <div style={{ width: '100%' }}>
-      {status === 'idle' || status === 'connecting' || status === 'error' ? (
+      {!hasJoined ? (
         <div style={{ maxWidth: '480px', margin: '40px auto' }} className="glass-card">
           <button className="btn btn-secondary" onClick={onBack} style={{ alignSelf: 'flex-start', marginBottom: '24px', padding: '8px 16px' }}>
             <ArrowLeft size={16} /> Volver
           </button>
 
-          <h2 className="join-title">Unirse a un Recorrido</h2>
-          <p className="join-desc">Introduce el código que te dio el guía y selecciona tu idioma.</p>
+          <h2 className="join-title">Unirse a una Sesión</h2>
+          <p className="join-desc">Introduce el código de la sala y selecciona tu idioma.</p>
 
           {errorMsg && (
             <div className="connection-banner">
@@ -382,7 +524,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
             onClick={joinRoom}
             disabled={status === 'connecting' || codeString.length < 4}
           >
-            {status === 'connecting' ? 'Conectando...' : 'Unirse al Tour'}
+            {status === 'connecting' ? 'Conectando...' : 'Unirse a la Sesión'}
           </button>
         </div>
       ) : (
@@ -393,16 +535,23 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
               <div className="panel-header">
                 <div className="panel-title" style={{ color: 'var(--color-secondary)' }}>
                   <Headphones size={24} />
-                  Panel del Turista
+                  Panel de Escucha
                 </div>
                 <div className="room-code-tag">
                   Sala: <span className="room-code-value">{roomCode}</span>
                 </div>
               </div>
 
+              {status === 'connecting' && (
+                <div className="connection-banner" style={{ marginBottom: '20px' }}>
+                  <AlertCircle size={16} />
+                  <span>{errorMsg || `Reconectando automáticamente (intento ${reconnectAttempt})...`}</span>
+                </div>
+              )}
+
               <div className="action-box" style={{ background: 'rgba(6, 182, 212, 0.03)', border: '1px solid rgba(6, 182, 212, 0.15)' }}>
                 <div className="waves-container">
-                  {isListening && !isMuted ? (
+                  {status === 'connected' && isListening && !isMuted ? (
                     <>
                       <div className="wave-circle"></div>
                       <div className="wave-circle"></div>
@@ -419,7 +568,9 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
                 </div>
 
                 <div className="action-mic-label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  {isListening ? (
+                  {status === 'connecting' ? (
+                    'Reconectando...'
+                  ) : isListening ? (
                     <>
                       <span className="pulse-dot" style={{ backgroundColor: 'var(--color-secondary)' }}></span>
                       Escuchando traducción
@@ -430,8 +581,10 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
                 </div>
 
                 <p style={{ color: 'var(--color-text-secondary)', fontSize: '14px', maxWidth: '360px', marginTop: '-8px' }}>
-                  {isListening 
-                    ? `El audio del guía se está traduciendo al ${SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.name}.` 
+                  {status === 'connecting'
+                    ? 'Conservaremos tu sesión y el audio continuará automáticamente.'
+                    : isListening
+                    ? `El audio original se está traduciendo al ${SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.name}.`
                     : 'Activa la audición para empezar a reproducir la traducción.'}
                 </p>
 
@@ -466,7 +619,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
                   </span>
                 </div>
 
-                <Visualizer isActive={isListening && !isMuted} color="secondary" />
+                <Visualizer isActive={status === 'connected' && isListening && !isMuted} color="secondary" />
               </div>
             </div>
 
@@ -476,15 +629,15 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
                   <Globe size={18} />
                   Transcripción y Traducción
                 </div>
-                <span className="badge badge-connected">
-                  Conectado
+                <span className={`badge ${status === 'connected' ? 'badge-connected' : 'badge-live'}`}>
+                  {status === 'connected' ? 'Conectado' : 'Reconectando'}
                 </span>
               </div>
               <div className="transcript-body">
                 {transcripts.length === 0 ? (
                   <div className="empty-state">
                     <Headphones size={32} />
-                    <p>Esperando la voz del guía para traducir...</p>
+                    <p>Esperando audio para traducir...</p>
                   </div>
                 ) : (
                   transcripts.map((t) => (
@@ -526,7 +679,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({ onBack, wsUrl })
               </div>
 
               <div className="status-row">
-                <span className="status-label">Idioma del Guía</span>
+                <span className="status-label">Idioma de origen</span>
                 <span className="status-val">
                   {SUPPORTED_LANGUAGES.find(l => l.code === guideLang)?.flag || '🎙️'} {SUPPORTED_LANGUAGES.find(l => l.code === guideLang)?.name || 'Detectando...'}
                 </span>

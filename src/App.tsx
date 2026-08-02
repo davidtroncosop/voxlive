@@ -56,7 +56,7 @@ function App() {
       {/* Footer */}
       <footer className="app-footer">
         <div>
-          &copy; {new Date().getFullYear()} Voxlive Tour Guide Platform.
+          &copy; {new Date().getFullYear()} Voxlive — Traducción de voz en tiempo real.
         </div>
         <div className="footer-links">
           <a href="#" className="footer-link" onClick={(e) => { e.preventDefault(); alert("Voxlive uses Gemini 2.0 Live and Cloudflare Edge for ultra low-latency speech-to-speech translation."); }}>Tecnología</a>

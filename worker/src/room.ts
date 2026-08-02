@@ -1,13 +1,21 @@
+import { createAudioFrame, resamplePcm16Base64 } from '../../shared/audioProtocol';
+import { isTranslationProvider } from '../../shared/translationProvider';
+import type { TranslationProvider } from '../../shared/translationProvider';
+
 export interface Env {
   TOUR_ROOM: DurableObjectNamespace;
   AI?: any; // Cloudflare Workers AI (optional binding)
   GEMINI_API_KEY?: string;
+  OPENAI_API_KEY?: string;
 }
 
 interface ConnectionInfo {
   socket: WebSocket;
   role: 'guide' | 'visitor';
   lang: string;
+  clientId: string;
+  audioFormat: 'binary' | 'json';
+  failedSends: number;
 }
 
 interface GeminiConnection {
@@ -18,6 +26,18 @@ interface GeminiConnection {
   transcriptId: string;
   outputTranscript: string;
   closing: boolean;
+  lastOutputAt: number;
+}
+
+interface OpenAIConnection {
+  ws: WebSocket;
+  isReady: boolean;
+  targetLang: string;
+  pendingAudio: string[];
+  transcriptId: string;
+  outputTranscript: string;
+  closing: boolean;
+  failureNotified: boolean;
   lastOutputAt: number;
 }
 
@@ -34,12 +54,17 @@ export class TourRoom {
   env: Env;
   connections: Map<string, ConnectionInfo>;
   guideSocket: WebSocket | null = null;
-  guideLang: string = 'es';
+  guideLang: string = 'en';
+  translationProvider: TranslationProvider = 'gemini';
   geminiApiKey: string = '';
   // Map of targetLang -> Gemini WebSocket client
   geminiConnections: Map<string, GeminiConnection>;
   geminiConnectionPromises: Map<string, Promise<GeminiConnection | null>>;
   geminiFailedMap: Set<string>;
+  openAIConnections: Map<string, OpenAIConnection>;
+  openAIConnectionPromises: Map<string, Promise<OpenAIConnection | null>>;
+  openAIFailedMap: Set<string>;
+  audioSequences: Map<string, number>;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -48,6 +73,10 @@ export class TourRoom {
     this.geminiConnections = new Map();
     this.geminiConnectionPromises = new Map();
     this.geminiFailedMap = new Set();
+    this.openAIConnections = new Map();
+    this.openAIConnectionPromises = new Map();
+    this.openAIFailedMap = new Set();
+    this.audioSequences = new Map();
   }
 
   // Handle HTTP/WebSocket connection upgrade requests
@@ -64,10 +93,14 @@ export class TourRoom {
 
     // Extract connection params
     const role = url.searchParams.get("role") as 'guide' | 'visitor' || 'visitor';
-    const lang = url.searchParams.get("lang") || (role === 'guide' ? 'es' : 'en');
+    const lang = url.searchParams.get("lang") || (role === 'guide' ? 'en' : 'es');
+    const audioFormat = url.searchParams.get("audio") === 'binary' ? 'binary' : 'json';
     const connId = Math.random().toString(36).substring(2, 10);
+    const clientId = url.searchParams.get("client")
+      ?.replace(/[^a-zA-Z0-9_-]/g, '')
+      .slice(0, 64) || connId;
 
-    await this.handleConnection(server, connId, role, lang);
+    await this.handleConnection(server, connId, role, lang, clientId, audioFormat);
 
     return new Response(null, {
       status: 101,
@@ -75,12 +108,32 @@ export class TourRoom {
     });
   }
 
-  async handleConnection(socket: WebSocket, connId: string, role: 'guide' | 'visitor', lang: string) {
+  async handleConnection(
+    socket: WebSocket,
+    connId: string,
+    role: 'guide' | 'visitor',
+    lang: string,
+    clientId: string,
+    audioFormat: 'binary' | 'json',
+  ) {
     socket.accept();
-    console.log(`[DO Room] New connection: id=${connId}, role=${role}, lang=${lang}`);
+    console.log(`[DO Room] New connection: id=${connId}, role=${role}, lang=${lang}, audio=${audioFormat}`);
+
+    // A reconnect replaces the stale socket instead of counting the same
+    // listener twice while the network detects the old connection is gone.
+    if (role === 'visitor') {
+      for (const [existingId, existing] of this.connections) {
+        if (existing.role === 'visitor' && existing.clientId === clientId) {
+          try {
+            existing.socket.close(4001, 'Replaced by reconnect');
+          } catch {}
+          this.connections.delete(existingId);
+        }
+      }
+    }
 
     // Register connection
-    const connInfo: ConnectionInfo = { socket, role, lang };
+    const connInfo: ConnectionInfo = { socket, role, lang, clientId, audioFormat, failedSends: 0 };
     this.connections.set(connId, connInfo);
 
     if (role === 'guide') {
@@ -97,22 +150,26 @@ export class TourRoom {
           const data = JSON.parse(msg.data);
           
           if (data.type === 'config') {
-            // Guide configuration: API Key & native language
+            // Guide configuration: provider, optional Gemini key, and source language.
             if (role === 'guide') {
+              const nextProvider = isTranslationProvider(data.provider) ? data.provider : this.translationProvider;
               const nextApiKey = typeof data.apiKey === 'string' ? data.apiKey.trim() : this.geminiApiKey;
               const nextGuideLang = typeof data.nativeLanguage === 'string' ? data.nativeLanguage : this.guideLang;
 
               // Live sessions are bound to their target and translation configuration.
-              // Recreate them whenever credentials or the guide language changes.
-              if (nextApiKey !== this.geminiApiKey || nextGuideLang !== this.guideLang) {
-                this.closeAllGemini();
+              // Recreate them whenever provider, credentials, or source language changes.
+              if (
+                nextProvider !== this.translationProvider ||
+                nextApiKey !== this.geminiApiKey ||
+                nextGuideLang !== this.guideLang
+              ) {
+                this.closeAllLiveTranslations();
               }
+              this.translationProvider = nextProvider;
               this.geminiApiKey = nextApiKey;
               this.guideLang = nextGuideLang;
 
-              if (this.geminiApiKey) {
-                console.log("Gemini API Key configured for room");
-              }
+              this.sendProviderStatus(socket);
               this.broadcastStatus();
             }
           } 
@@ -130,6 +187,13 @@ export class TourRoom {
               await this.handleGuideText(data.text, data.isFinal);
             }
           }
+
+          else if (data.type === 'ping') {
+            socket.send(JSON.stringify({
+              type: 'pong',
+              timestamp: data.timestamp || Date.now(),
+            }));
+          }
         }
       } catch (err) {
         console.error("Error processing websocket message in DO:", err);
@@ -141,7 +205,7 @@ export class TourRoom {
       this.connections.delete(connId);
       if (role === 'guide') {
         this.guideSocket = null;
-        this.closeAllGemini();
+        this.closeAllLiveTranslations();
       }
       this.broadcastStatus();
     });
@@ -151,7 +215,7 @@ export class TourRoom {
       this.connections.delete(connId);
       if (role === 'guide') {
         this.guideSocket = null;
-        this.closeAllGemini();
+        this.closeAllLiveTranslations();
       }
       this.broadcastStatus();
     });
@@ -169,7 +233,8 @@ export class TourRoom {
     const statusMsg = JSON.stringify({
       type: 'status_update',
       listenersCount,
-      guideLanguage: this.guideLang
+      guideLanguage: this.guideLang,
+      translationProvider: this.translationProvider,
     });
 
     for (const conn of this.connections.values()) {
@@ -179,6 +244,32 @@ export class TourRoom {
         // Active websocket check failure
       }
     }
+  }
+
+  sendProviderStatus(socket: WebSocket) {
+    const configured = this.translationProvider === 'openai'
+      ? Boolean(this.env.OPENAI_API_KEY)
+      : Boolean(this.geminiApiKey || this.env.GEMINI_API_KEY);
+    const providerName = this.translationProvider === 'openai' ? 'OpenAI' : 'Gemini';
+
+    try {
+      socket.send(JSON.stringify({
+        type: 'provider_status',
+        provider: this.translationProvider,
+        configured,
+        model: this.translationProvider === 'openai'
+          ? 'gpt-realtime-translate'
+          : 'gemini-3.5-live-translate-preview',
+        message: configured
+          ? `${providerName} está configurado en el servidor.`
+          : `Falta configurar la API key de ${providerName} en el servidor.`,
+      }));
+    } catch {}
+  }
+
+  closeAllLiveTranslations() {
+    this.closeAllGemini();
+    this.closeAllOpenAI();
   }
 
   // Close all Gemini API WebSockets
@@ -192,6 +283,22 @@ export class TourRoom {
     this.geminiConnections.clear();
     this.geminiConnectionPromises.clear();
     this.geminiFailedMap.clear();
+  }
+
+  closeAllOpenAI() {
+    for (const connection of this.openAIConnections.values()) {
+      connection.closing = true;
+      try {
+        connection.ws.send(JSON.stringify({ type: 'session.close' }));
+      } catch {
+        try {
+          connection.ws.close();
+        } catch {}
+      }
+    }
+    this.openAIConnections.clear();
+    this.openAIConnectionPromises.clear();
+    this.openAIFailedMap.clear();
   }
 
   // Create or return existing Gemini connection for target language
@@ -354,11 +461,7 @@ export class TourRoom {
                 const audioLen = part.inlineData.data ? part.inlineData.data.length : 0;
                 console.log(`[Gemini DO] Audio chunk received. MimeType: ${part.inlineData.mimeType}, Size: ${audioLen} chars`);
                 
-                this.broadcastToLanguage(targetLang, JSON.stringify({
-                  type: 'audio_chunk',
-                  data: part.inlineData.data, // base64
-                  sampleRate: 24000 // Gemini default audio out is 24kHz PCM
-                }));
+                this.broadcastAudioToLanguage(targetLang, part.inlineData.data, 24000);
               }
             }
           }
@@ -377,7 +480,7 @@ export class TourRoom {
         this.geminiConnections.delete(targetLang);
         if (!geminiConn.closing) {
           this.geminiFailedMap.add(targetLang);
-          this.notifyGuideOfLiveFailure(e.reason || `Gemini Live cerró la conexión (código ${e.code}).`);
+          this.notifyGuideOfLiveFailure('Gemini', e.reason || `Gemini Live cerró la conexión (código ${e.code}).`);
         }
       });
 
@@ -386,7 +489,7 @@ export class TourRoom {
         this.geminiConnections.delete(targetLang);
         if (!geminiConn.closing) {
           this.geminiFailedMap.add(targetLang);
-          this.notifyGuideOfLiveFailure('No se pudo mantener la conexión con Gemini Live. Se usará la traducción de respaldo.');
+          this.notifyGuideOfLiveFailure('Gemini', 'No se pudo mantener la conexión con Gemini Live.');
         }
       });
 
@@ -410,13 +513,203 @@ export class TourRoom {
     }));
   }
 
-  notifyGuideOfLiveFailure(reason: string) {
+  async getOpenAIConnection(targetLang: string): Promise<OpenAIConnection | null> {
+    const apiKey = this.env.OPENAI_API_KEY || '';
+
+    if (!apiKey) {
+      console.log('[OpenAI DO] OPENAI_API_KEY is not configured. Falling back to text translation.');
+      return null;
+    }
+
+    if (this.openAIFailedMap.has(targetLang)) return null;
+
+    const existing = this.openAIConnections.get(targetLang);
+    if (existing) return existing;
+
+    const pending = this.openAIConnectionPromises.get(targetLang);
+    if (pending) return pending;
+
+    const connectionPromise = this.createOpenAIConnection(targetLang, apiKey);
+    this.openAIConnectionPromises.set(targetLang, connectionPromise);
+    try {
+      return await connectionPromise;
+    } finally {
+      this.openAIConnectionPromises.delete(targetLang);
+    }
+  }
+
+  async createOpenAIConnection(targetLang: string, apiKey: string): Promise<OpenAIConnection | null> {
+    try {
+      console.log(`[OpenAI DO] Connecting to gpt-realtime-translate for ${this.guideLang} -> ${targetLang}`);
+      const response = await fetch(
+        'https://api.openai.com/v1/realtime/translations?model=gpt-realtime-translate',
+        {
+          headers: {
+            Upgrade: 'websocket',
+            Authorization: `Bearer ${apiKey}`,
+            'OpenAI-Safety-Identifier': `voxlive-${this.state.id.toString().slice(0, 48)}`,
+          },
+        },
+      );
+
+      if (response.status !== 101) {
+        let detail = '';
+        try {
+          detail = await response.text();
+        } catch {}
+        console.error(`[OpenAI DO] Realtime connection rejected (${response.status}): ${detail.slice(0, 500)}`);
+        this.openAIFailedMap.add(targetLang);
+        this.notifyGuideOfLiveFailure('OpenAI', `La conexión fue rechazada (HTTP ${response.status}).`);
+        return null;
+      }
+
+      const openAIWs = response.webSocket;
+      if (!openAIWs) {
+        console.error('[OpenAI DO] WebSocket upgrade did not return a socket.');
+        this.openAIFailedMap.add(targetLang);
+        return null;
+      }
+
+      openAIWs.accept();
+      const connection: OpenAIConnection = {
+        ws: openAIWs,
+        isReady: false,
+        targetLang,
+        pendingAudio: [],
+        transcriptId: Math.random().toString(36).slice(2),
+        outputTranscript: '',
+        closing: false,
+        failureNotified: false,
+        lastOutputAt: 0,
+      };
+      this.openAIConnections.set(targetLang, connection);
+
+      openAIWs.send(JSON.stringify({
+        type: 'session.update',
+        session: {
+          audio: {
+            output: {
+              language: targetLang,
+            },
+          },
+        },
+      }));
+
+      openAIWs.addEventListener('message', async (event) => {
+        try {
+          let text = '';
+          if (typeof event.data === 'string') {
+            text = event.data;
+          } else if (event.data instanceof ArrayBuffer) {
+            text = new TextDecoder().decode(event.data);
+          } else if (event.data && typeof event.data === 'object') {
+            const data = event.data as { arrayBuffer?: () => Promise<ArrayBuffer> };
+            if (data.arrayBuffer) text = new TextDecoder().decode(await data.arrayBuffer());
+          }
+          if (!text) return;
+
+          const serverEvent = JSON.parse(text);
+
+          if (serverEvent.type === 'session.updated') {
+            connection.isReady = true;
+            console.log(`[OpenAI DO] Translation session ready for ${targetLang}; flushing ${connection.pendingAudio.length} chunks.`);
+            for (const audio of connection.pendingAudio) {
+              this.sendOpenAIAudio(connection, audio);
+            }
+            connection.pendingAudio = [];
+            return;
+          }
+
+          if (serverEvent.type === 'session.output_audio.delta' && typeof serverEvent.delta === 'string') {
+            connection.lastOutputAt = Date.now();
+            const sampleRate = Number.isFinite(serverEvent.sample_rate) ? serverEvent.sample_rate : 24000;
+            this.broadcastAudioToLanguage(targetLang, serverEvent.delta, sampleRate);
+            return;
+          }
+
+          if (serverEvent.type === 'session.output_transcript.delta' && typeof serverEvent.delta === 'string') {
+            connection.lastOutputAt = Date.now();
+            connection.outputTranscript += serverEvent.delta;
+            const isFinal = /[.!?…]["'’”)]?\s*$/.test(connection.outputTranscript);
+
+            this.broadcastToLanguage(targetLang, JSON.stringify({
+              type: 'transcript',
+              id: connection.transcriptId,
+              originalText: '',
+              translatedText: connection.outputTranscript,
+              languageCode: targetLang,
+              isFinal,
+              hasAudio: true,
+            }));
+
+            if (isFinal) {
+              connection.transcriptId = Math.random().toString(36).slice(2);
+              connection.outputTranscript = '';
+            }
+            return;
+          }
+
+          if (serverEvent.type === 'error') {
+            const detail = serverEvent.error?.message || 'Error desconocido en la sesión Realtime.';
+            console.error(`[OpenAI DO] Realtime event error for ${targetLang}: ${detail}`);
+            if (!connection.failureNotified) {
+              connection.failureNotified = true;
+              this.notifyGuideOfLiveFailure('OpenAI', detail);
+            }
+          }
+        } catch (error) {
+          console.error(`[OpenAI DO] Could not process Realtime event for ${targetLang}:`, error);
+        }
+      });
+
+      openAIWs.addEventListener('close', (event) => {
+        console.log(`[OpenAI DO] WebSocket closed for ${targetLang}. Code: ${event.code}, Reason: ${event.reason}`);
+        this.openAIConnections.delete(targetLang);
+        if (!connection.closing) {
+          this.openAIFailedMap.add(targetLang);
+          if (!connection.failureNotified) {
+            connection.failureNotified = true;
+            this.notifyGuideOfLiveFailure('OpenAI', event.reason || `La conexión se cerró (código ${event.code}).`);
+          }
+        }
+      });
+
+      openAIWs.addEventListener('error', (event) => {
+        console.error(`[OpenAI DO] WebSocket error for ${targetLang}:`, event);
+        this.openAIConnections.delete(targetLang);
+        if (!connection.closing) {
+          this.openAIFailedMap.add(targetLang);
+          if (!connection.failureNotified) {
+            connection.failureNotified = true;
+            this.notifyGuideOfLiveFailure('OpenAI', 'No se pudo mantener la conexión Realtime.');
+          }
+        }
+      });
+
+      return connection;
+    } catch (error) {
+      console.error(`[OpenAI DO] Failed to connect for ${targetLang}:`, error);
+      this.openAIFailedMap.add(targetLang);
+      this.notifyGuideOfLiveFailure('OpenAI', 'No se pudo abrir la conexión Realtime.');
+      return null;
+    }
+  }
+
+  sendOpenAIAudio(connection: OpenAIConnection, base64Pcm24k: string) {
+    connection.ws.send(JSON.stringify({
+      type: 'session.input_audio_buffer.append',
+      audio: base64Pcm24k,
+    }));
+  }
+
+  notifyGuideOfLiveFailure(provider: 'Gemini' | 'OpenAI', reason: string) {
     if (!this.guideSocket) return;
     const detail = reason.length > 180 ? `${reason.slice(0, 177)}...` : reason;
     try {
       this.guideSocket.send(JSON.stringify({
         type: 'translation_warning',
-        message: `Gemini Live no está disponible: ${detail} Se activó el modo de respaldo.`
+        provider: provider.toLowerCase(),
+        message: `${provider} no está disponible: ${detail} Se activó el modo de respaldo.`
       }));
     } catch {}
   }
@@ -434,11 +727,37 @@ export class TourRoom {
       }
     }
 
-    // 2. If Gemini Live is configured, forward audio chunk to all needed languages
-    const apiKey = this.geminiApiKey || this.env.GEMINI_API_KEY;
-    if (apiKey) {
+    // 2. Forward each chunk only to the provider selected for this room.
+    if (this.translationProvider === 'openai' && this.env.OPENAI_API_KEY) {
+      let base64Pcm24k: string;
+      try {
+        base64Pcm24k = resamplePcm16Base64(base64Data, sampleRate, 24000);
+      } catch (error) {
+        console.error('[OpenAI DO] Could not resample microphone audio:', error);
+        this.notifyGuideOfLiveFailure('OpenAI', 'El formato del audio de entrada no es válido.');
+        return;
+      }
+
       for (const targetLang of targetLanguages) {
-        // Skip translating to guide's own language (they don't need it)
+        if (targetLang === this.guideLang) continue;
+        if (this.openAIFailedMap.has(targetLang)) continue;
+
+        const openAI = await this.getOpenAIConnection(targetLang);
+        if (!openAI) continue;
+
+        if (openAI.isReady) {
+          this.sendOpenAIAudio(openAI, base64Pcm24k);
+        } else {
+          openAI.pendingAudio.push(base64Pcm24k);
+          if (openAI.pendingAudio.length > 48) openAI.pendingAudio.shift();
+        }
+      }
+      return;
+    }
+
+    const geminiApiKey = this.geminiApiKey || this.env.GEMINI_API_KEY;
+    if (this.translationProvider === 'gemini' && geminiApiKey) {
+      for (const targetLang of targetLanguages) {
         if (targetLang === this.guideLang) continue;
         if (this.geminiFailedMap.has(targetLang)) continue;
 
@@ -478,22 +797,28 @@ export class TourRoom {
       }
     }
 
-    // 3. In Simulator Mode OR if Gemini Live failed, translate text and broadcast
+    // 3. In simulator mode, or if the selected live provider failed, translate
+    // finalized browser transcripts and let listeners use their local TTS.
     // We only translate when text is FINAL to save API requests and provide stable text
-    const apiKey = this.geminiApiKey || this.env.GEMINI_API_KEY;
     if (isFinal) {
       for (const targetLang of targetLanguages) {
-        // A successful setup is not enough: only suppress the fallback while
-        // Gemini has actually produced output recently. This prevents silent
-        // rooms when Live accepts the session but fails to translate audio.
-        const liveConnection = this.geminiConnections.get(targetLang);
-        const isLiveActive = Boolean(
-          apiKey &&
-          liveConnection?.isReady &&
-          liveConnection.lastOutputAt > 0 &&
-          Date.now() - liveConnection.lastOutputAt < 5000 &&
-          !this.geminiFailedMap.has(targetLang)
-        );
+        const geminiConnection = this.geminiConnections.get(targetLang);
+        const openAIConnection = this.openAIConnections.get(targetLang);
+        const isLiveActive = this.translationProvider === 'openai'
+          ? Boolean(
+              this.env.OPENAI_API_KEY &&
+              openAIConnection?.isReady &&
+              openAIConnection.lastOutputAt > 0 &&
+              Date.now() - openAIConnection.lastOutputAt < 5000 &&
+              !this.openAIFailedMap.has(targetLang)
+            )
+          : Boolean(
+              (this.geminiApiKey || this.env.GEMINI_API_KEY) &&
+              geminiConnection?.isReady &&
+              geminiConnection.lastOutputAt > 0 &&
+              Date.now() - geminiConnection.lastOutputAt < 5000 &&
+              !this.geminiFailedMap.has(targetLang)
+            );
         if (isLiveActive) continue;
 
         if (targetLang === this.guideLang) {
@@ -652,6 +977,44 @@ export class TourRoom {
           conn.socket.send(message);
         } catch {
           // Socket write failure
+        }
+      }
+    }
+  }
+
+  // Binary-capable clients avoid the ~33% Base64 expansion. JSON remains as a
+  // deployment fallback for clients that connected without audio=binary.
+  broadcastAudioToLanguage(lang: string, base64Data: string, sampleRate: number) {
+    const sequence = ((this.audioSequences.get(lang) || 0) + 1) >>> 0;
+    this.audioSequences.set(lang, sequence);
+
+    const binaryFrame = createAudioFrame(base64Data, sampleRate, sequence, Date.now());
+    let legacyMessage: string | null = null;
+
+    for (const [connId, conn] of this.connections) {
+      if (conn.role !== 'visitor' || conn.lang !== lang || conn.socket.readyState !== 1) continue;
+
+      try {
+        if (conn.audioFormat === 'binary') {
+          conn.socket.send(binaryFrame);
+        } else {
+          legacyMessage ||= JSON.stringify({
+            type: 'audio_chunk',
+            data: base64Data,
+            sampleRate,
+            sequence,
+            sentAt: Date.now(),
+          });
+          conn.socket.send(legacyMessage);
+        }
+        conn.failedSends = 0;
+      } catch {
+        conn.failedSends++;
+        if (conn.failedSends >= 3) {
+          try {
+            conn.socket.close(1011, 'Audio delivery failed');
+          } catch {}
+          this.connections.delete(connId);
         }
       }
     }
