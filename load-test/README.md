@@ -25,17 +25,11 @@ python load-test/generate_fish_audio.py
 ```
 
 En una primera terminal, iniciar el emisor automático usando un código de sala
-nuevo. El Worker utiliza su secreto `GEMINI_API_KEY` para traducir:
+nuevo. El Worker utiliza `gpt-realtime-translate` y lee `OPENAI_API_KEY` desde
+sus secretos:
 
 ```bash
 python load-test/voxlive_audio_publisher.py --room 1234 --duration 330
-```
-
-Para probar OpenAI con exactamente el mismo audio, configurar el secreto
-`OPENAI_API_KEY` del Worker y seleccionar el proveedor en el emisor:
-
-```bash
-python load-test/voxlive_audio_publisher.py --room 1234 --duration 330 --provider openai
 ```
 
 También se puede abrir Voxlive en otro dispositivo, crear una sala, activar el
@@ -74,11 +68,10 @@ resultados más repetibles y evita límites dinámicos del entorno administrado.
 ## Comparación de calidad con Groq Whisper
 
 Groq Whisper se utiliza como transcriptor del audio español, no como traductor
-inglés a español. Capturar la misma entrada con ambos motores:
+inglés a español. Capturar y evaluar la salida de GPT Realtime Translate:
 
 ```bash
-python load-test/capture_translation.py --provider openai --output load-test/reports/openai-spanish.wav
-python load-test/capture_translation.py --provider gemini --output load-test/reports/gemini-spanish.wav
+python load-test/capture_translation.py --output load-test/reports/openai-spanish.wav
 python load-test/compare_with_groq.py
 ```
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Transcribe Gemini and OpenAI Spanish outputs with Groq Whisper."""
+"""Transcribe the GPT Realtime Translate Spanish output with Groq Whisper."""
 
 from __future__ import annotations
 
@@ -59,13 +59,12 @@ def main() -> int:
         raise ValueError("GROQ_API_KEY is missing from the environment file.")
 
     openai_result = transcribe(Path(args.openai_audio), api_key, model)
-    gemini_result = transcribe(Path(args.gemini_audio), api_key, model)
     source = Path(args.source_text).read_text().strip()
 
     report = Path(args.report)
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text(
-        f"""# Comparación de traducción Voxlive
+        f"""# Evaluación de traducción Voxlive
 
 Evaluador de audio: `{model}` mediante el endpoint de transcripción de Groq (`language=es`).
 
@@ -81,11 +80,6 @@ Promedio `avg_logprob` de Whisper: `{average_log_probability(openai_result)}`
 
 {openai_result.get('text', '').strip()}
 
-## Google Gemini 3.5 Live Translate
-
-Promedio `avg_logprob` de Whisper: `{average_log_probability(gemini_result)}`
-
-{gemini_result.get('text', '').strip()}
 """,
         encoding="utf-8",
     )
@@ -94,19 +88,16 @@ Promedio `avg_logprob` de Whisper: `{average_log_probability(gemini_result)}`
         "model": model,
         "report": str(report),
         "openai_transcript": openai_result.get("text", "").strip(),
-        "gemini_transcript": gemini_result.get("text", "").strip(),
         "openai_avg_logprob": average_log_probability(openai_result),
-        "gemini_avg_logprob": average_log_probability(gemini_result),
     }, indent=2, ensure_ascii=False))
     return 0
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Compare translated audio using Groq Whisper transcription.")
+    parser = argparse.ArgumentParser(description="Evaluate translated audio using Groq Whisper transcription.")
     parser.add_argument("--env", default=".env")
     parser.add_argument("--source-text", default="load-test/english_test_script.txt")
     parser.add_argument("--openai-audio", default="load-test/reports/openai-spanish.wav")
-    parser.add_argument("--gemini-audio", default="load-test/reports/gemini-spanish.wav")
     parser.add_argument("--report", default="load-test/reports/translation-comparison.md")
     return parser.parse_args()
 

@@ -31,19 +31,18 @@ export function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-export function resamplePcm16Base64(
-  base64Data: string,
+export function resamplePcm16Bytes(
+  sourceBytes: Uint8Array,
   sourceRate: number,
   targetRate: number,
-): string {
-  if (sourceRate === targetRate) return base64Data;
+): Uint8Array {
+  if (sourceRate === targetRate) return sourceBytes;
   if (!Number.isFinite(sourceRate) || !Number.isFinite(targetRate) || sourceRate <= 0 || targetRate <= 0) {
     throw new Error('Invalid PCM sample rate.');
   }
 
-  const sourceBytes = base64ToBytes(base64Data);
   const sourceSampleCount = Math.floor(sourceBytes.byteLength / 2);
-  if (sourceSampleCount === 0) return '';
+  if (sourceSampleCount === 0) return new Uint8Array(0);
 
   const sourceView = new DataView(sourceBytes.buffer, sourceBytes.byteOffset, sourceSampleCount * 2);
   const targetSampleCount = Math.max(1, Math.round(sourceSampleCount * targetRate / sourceRate));
@@ -61,16 +60,26 @@ export function resamplePcm16Base64(
     targetView.setInt16(index * 2, sample, true);
   }
 
+  return targetBytes;
+}
+
+export function resamplePcm16Base64(
+  base64Data: string,
+  sourceRate: number,
+  targetRate: number,
+): string {
+  if (sourceRate === targetRate) return base64Data;
+  const sourceBytes = base64ToBytes(base64Data);
+  const targetBytes = resamplePcm16Bytes(sourceBytes, sourceRate, targetRate);
   return bytesToBase64(targetBytes);
 }
 
-export function createAudioFrame(
-  base64Data: string,
+export function createAudioFrameFromBytes(
+  pcmBytes: Uint8Array,
   sampleRate: number,
   sequence: number,
   sentAt: number,
 ): ArrayBuffer {
-  const pcmBytes = base64ToBytes(base64Data);
   const frame = new ArrayBuffer(AUDIO_FRAME_HEADER_BYTES + pcmBytes.byteLength);
   const view = new DataView(frame);
 
@@ -81,6 +90,15 @@ export function createAudioFrame(
   new Uint8Array(frame, AUDIO_FRAME_HEADER_BYTES).set(pcmBytes);
 
   return frame;
+}
+
+export function createAudioFrame(
+  base64Data: string,
+  sampleRate: number,
+  sequence: number,
+  sentAt: number,
+): ArrayBuffer {
+  return createAudioFrameFromBytes(base64ToBytes(base64Data), sampleRate, sequence, sentAt);
 }
 
 export function decodeAudioFrame(frame: ArrayBuffer): AudioFrame {

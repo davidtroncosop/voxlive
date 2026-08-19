@@ -26,6 +26,16 @@ export interface RoomState {
   activeListeners: number;
 }
 
+export interface CustomGlossaryTerm {
+  canonical: string;
+  aliases: string[];
+}
+
+export interface NetworkQuality {
+  rttMs: number | null;
+  status: 'excellent' | 'good' | 'fair' | 'poor' | 'unknown';
+}
+
 export const SUPPORTED_LANGUAGES: Language[] = [
   { code: 'es', name: 'Español', flag: '🇪🇸', speechCode: 'es-ES' },
   { code: 'en', name: 'English', flag: '🇺🇸', speechCode: 'en-US' },

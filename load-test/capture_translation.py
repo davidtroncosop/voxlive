@@ -38,9 +38,14 @@ async def receive_audio(
     websocket: websockets.ClientConnection,
     pcm: bytearray,
     sample_rates: set[int],
+    transcripts: dict[str, str],
 ) -> None:
     async for message in websocket:
         if isinstance(message, str):
+            data = json.loads(message)
+            if data.get("type") == "transcript":
+                transcript_id = str(data.get("id", "unknown"))
+                transcripts[transcript_id] = data.get("translatedText") or data.get("text") or ""
             continue
         if len(message) < AUDIO_HEADER.size:
             raise RuntimeError("Received an invalid Voxlive audio frame.")
@@ -74,10 +79,11 @@ async def run(args: argparse.Namespace) -> int:
 
     captured_pcm = bytearray()
     sample_rates: set[int] = set()
+    transcripts: dict[str, str] = {}
     loop = asyncio.get_running_loop()
 
     print(
-        f"Capturing {args.provider}: room={room} source={len(source_pcm) / (INPUT_SAMPLE_RATE * 2):.2f}s",
+        f"Capturing gpt-realtime-translate: room={room} source={len(source_pcm) / (INPUT_SAMPLE_RATE * 2):.2f}s",
         flush=True,
     )
 
@@ -89,7 +95,7 @@ async def run(args: argparse.Namespace) -> int:
         max_size=None,
         ssl=ssl_context,
     ) as listener:
-        audio_task = asyncio.create_task(receive_audio(listener, captured_pcm, sample_rates))
+        audio_task = asyncio.create_task(receive_audio(listener, captured_pcm, sample_rates, transcripts))
 
         async with websockets.connect(
             guide_url,
@@ -102,8 +108,7 @@ async def run(args: argparse.Namespace) -> int:
             guide_task = asyncio.create_task(receive_guide_messages(guide))
             await guide.send(json.dumps({
                 "type": "config",
-                "provider": args.provider,
-                "apiKey": "",
+                "provider": "openai",
                 "nativeLanguage": "en",
             }))
             await asyncio.sleep(1)
@@ -157,19 +162,19 @@ async def run(args: argparse.Namespace) -> int:
         wav.writeframes(captured_pcm)
 
     print(json.dumps({
-        "provider": args.provider,
+        "provider": "openai",
         "room": room,
         "output": str(output),
         "sample_rate": sample_rate,
         "pcm_bytes": len(captured_pcm),
         "captured_audio_seconds": round(len(captured_pcm) / (sample_rate * BYTES_PER_SAMPLE), 2),
+        "transcripts": list(transcripts.values()),
     }, indent=2))
     return 0
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Capture translated Voxlive audio for quality review.")
-    parser.add_argument("--provider", choices=("gemini", "openai"), required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--room")
     parser.add_argument("--audio", default="load-test/generated/english_test_16k.pcm")

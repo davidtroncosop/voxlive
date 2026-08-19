@@ -13,7 +13,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSelectRole }) => {
         Voxlive
       </div>
       <div className="landing-subtitle">
-        Traducción de voz a voz en tiempo real para conversaciones, presentaciones y eventos, impulsada por Cloudflare Edge y Gemini AI.
+        Traducción de voz a voz en tiempo real para conversaciones, presentaciones y eventos, impulsada por Cloudflare Edge y OpenAI.
       </div>
 
       <div className="role-grid">
@@ -71,9 +71,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSelectRole }) => {
             </p>
           </div>
           <div className="glass-card" style={{ padding: '20px', borderRadius: 'var(--radius-md)' }}>
-            <h4 style={{ fontSize: '15px', fontWeight: 700, marginBottom: '8px', color: '#10b981' }}>Gemini Multimodal Live</h4>
+            <h4 style={{ fontSize: '15px', fontWeight: 700, marginBottom: '8px', color: '#10b981' }}>GPT Realtime Translate</h4>
             <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', lineHeight: '1.4' }}>
-              Traducción directa de voz a voz en un solo paso y con baja latencia mediante el AI Gateway de Cloudflare.
+              Traducción continua de voz a voz mediante el endpoint especializado de OpenAI.
             </p>
           </div>
         </div>

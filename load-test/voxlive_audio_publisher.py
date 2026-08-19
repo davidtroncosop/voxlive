@@ -75,9 +75,8 @@ async def run(args: argparse.Namespace) -> int:
             ) as websocket:
                 await websocket.send(json.dumps({
                     "type": "config",
-                    "apiKey": "",
                     "nativeLanguage": "en",
-                    "provider": args.provider,
+                    "provider": "openai",
                 }))
                 receiver = asyncio.create_task(receive_server_messages(websocket))
 
@@ -137,12 +136,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--duration", type=float, default=120)
     parser.add_argument("--chunk-ms", type=float, default=128)
     parser.add_argument("--start-delay", type=float, default=2)
-    parser.add_argument(
-        "--provider",
-        choices=("gemini", "openai"),
-        default="gemini",
-        help="Realtime translation engine selected for the room.",
-    )
     parser.add_argument(
         "--base-url",
         default="wss://voxlive-backend.davidtroncosop.workers.dev",
