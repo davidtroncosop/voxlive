@@ -1,11 +1,14 @@
-export const AUDIO_FRAME_MAGIC = 0x56584c31; // "VXL1"
+export const AUDIO_FRAME_MAGIC = 0x56584c31; // "VXL1" (PCM16)
+export const AUDIO_FRAME_OPUS_MAGIC = 0x56584c32; // "VXL2" (Opus compressed)
 export const AUDIO_FRAME_HEADER_BYTES = 20;
 
 export interface AudioFrame {
+  codec: 'pcm' | 'opus';
   sequence: number;
   sentAt: number;
   sampleRate: number;
-  pcmBytes: Uint8Array;
+  payloadBytes: Uint8Array;
+  pcmBytes: Uint8Array; // alias for backwards compatibility
 }
 
 export function base64ToBytes(base64Data: string): Uint8Array {
@@ -92,6 +95,24 @@ export function createAudioFrameFromBytes(
   return frame;
 }
 
+export function createOpusAudioFrame(
+  opusBytes: Uint8Array,
+  sampleRate: number,
+  sequence: number,
+  sentAt: number,
+): ArrayBuffer {
+  const frame = new ArrayBuffer(AUDIO_FRAME_HEADER_BYTES + opusBytes.byteLength);
+  const view = new DataView(frame);
+
+  view.setUint32(0, AUDIO_FRAME_OPUS_MAGIC);
+  view.setUint32(4, sequence >>> 0);
+  view.setFloat64(8, sentAt);
+  view.setUint32(16, sampleRate >>> 0);
+  new Uint8Array(frame, AUDIO_FRAME_HEADER_BYTES).set(opusBytes);
+
+  return frame;
+}
+
 export function createAudioFrame(
   base64Data: string,
   sampleRate: number,
@@ -107,20 +128,23 @@ export function decodeAudioFrame(frame: ArrayBuffer): AudioFrame {
   }
 
   const view = new DataView(frame);
-  if (view.getUint32(0) !== AUDIO_FRAME_MAGIC) {
+  const magic = view.getUint32(0);
+  const isOpus = magic === AUDIO_FRAME_OPUS_MAGIC;
+  const isPcm = magic === AUDIO_FRAME_MAGIC;
+
+  if (!isOpus && !isPcm) {
     throw new Error('Unknown audio frame format.');
   }
 
   const sampleRate = view.getUint32(16);
-  const payloadBytes = frame.byteLength - AUDIO_FRAME_HEADER_BYTES;
-  if (sampleRate < 8000 || sampleRate > 96000 || payloadBytes % 2 !== 0) {
-    throw new Error('Invalid PCM audio frame.');
-  }
+  const payloadBytes = new Uint8Array(frame, AUDIO_FRAME_HEADER_BYTES);
 
   return {
+    codec: isOpus ? 'opus' : 'pcm',
     sequence: view.getUint32(4),
     sentAt: view.getFloat64(8),
     sampleRate,
-    pcmBytes: new Uint8Array(frame, AUDIO_FRAME_HEADER_BYTES),
+    payloadBytes,
+    pcmBytes: payloadBytes,
   };
 }

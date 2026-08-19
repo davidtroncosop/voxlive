@@ -1,11 +1,14 @@
 import { 
-  createAudioFrame, 
+  createAudioFrameFromBytes, 
+  createOpusAudioFrame, 
   decodeAudioFrame, 
   resamplePcm16Base64, 
   resamplePcm16Bytes, 
+  base64ToBytes, 
   bytesToBase64 
 } from '../../shared/audioProtocol';
 import { TRANSLATION_PROVIDER } from '../../shared/translationProvider';
+import OpusScript from 'opusscript';
 
 export interface Env {
   TOUR_ROOM: DurableObjectNamespace;
@@ -17,7 +20,7 @@ interface ConnectionInfo {
   role: 'guide' | 'visitor';
   lang: string;
   clientId: string;
-  audioFormat: 'binary' | 'json';
+  audioFormat: 'opus' | 'binary' | 'json';
   failedSends: number;
 }
 
@@ -31,6 +34,11 @@ interface OpenAIConnection {
   closing: boolean;
   failureNotified: boolean;
   lastOutputAt: number;
+}
+
+interface OpusLanguageState {
+  encoder: OpusScript;
+  pendingPcm: Uint8Array;
 }
 
 export interface GlossaryTerm {
@@ -50,6 +58,8 @@ const DEFAULT_PROTECTED_TERMS: GlossaryTerm[] = [
 ];
 
 const GUIDE_DISCONNECT_GRACE_MS = 12_000; // 12 seconds grace period before tearing down sessions
+const OPUS_FRAME_SAMPLES = 480; // 20ms at 24 kHz
+const OPUS_FRAME_BYTES = OPUS_FRAME_SAMPLES * 2; // 960 bytes per 20ms PCM16 frame
 
 export class TourRoom {
   state: DurableObjectState;
@@ -64,6 +74,7 @@ export class TourRoom {
   openAIConnectionPromises: Map<string, Promise<OpenAIConnection | null>>;
   openAIFailedMap: Set<string>;
   audioSequences: Map<string, number>;
+  opusEncoders: Map<string, OpusLanguageState>;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -73,6 +84,7 @@ export class TourRoom {
     this.openAIConnectionPromises = new Map();
     this.openAIFailedMap = new Set();
     this.audioSequences = new Map();
+    this.opusEncoders = new Map();
   }
 
   // Handle HTTP/WebSocket connection upgrade requests
@@ -90,7 +102,9 @@ export class TourRoom {
     // Extract connection params
     const role = (url.searchParams.get('role') as 'guide' | 'visitor') || 'visitor';
     const lang = url.searchParams.get('lang') || (role === 'guide' ? 'en' : 'es');
-    const audioFormat = url.searchParams.get('audio') === 'binary' ? 'binary' : 'json';
+    const audioParam = url.searchParams.get('audio');
+    const audioFormat: 'opus' | 'binary' | 'json' = 
+      audioParam === 'opus' ? 'opus' : audioParam === 'binary' ? 'binary' : 'json';
     const hostToken = url.searchParams.get('hostToken') || '';
     const connId = Math.random().toString(36).substring(2, 10);
     const clientId = url.searchParams.get('client')
@@ -111,7 +125,7 @@ export class TourRoom {
     role: 'guide' | 'visitor',
     lang: string,
     clientId: string,
-    audioFormat: 'binary' | 'json',
+    audioFormat: 'opus' | 'binary' | 'json',
     hostToken?: string,
   ) {
     socket.accept();
@@ -130,7 +144,6 @@ export class TourRoom {
     } else if (role === 'guide') {
       // Guide connection handling with security token & grace period recovery
       if (this.guideHostSecret && hostToken && hostToken !== this.guideHostSecret) {
-        // Unauthorized attempt to take over guide role
         try {
           socket.send(JSON.stringify({
             type: 'error',
@@ -152,7 +165,6 @@ export class TourRoom {
         this.guideDisconnectTimer = null;
       }
 
-      // Close previous guide socket if still present
       if (this.guideSocket && this.guideSocket !== socket) {
         try {
           this.guideSocket.close(4002, 'Replaced by guide reconnect');
@@ -162,7 +174,6 @@ export class TourRoom {
       this.guideSocket = socket;
       this.guideLang = lang;
 
-      // Send provider status and hostToken back to guide
       this.sendProviderStatus(socket);
     }
 
@@ -170,12 +181,11 @@ export class TourRoom {
     const connInfo: ConnectionInfo = { socket, role, lang, clientId, audioFormat, failedSends: 0 };
     this.connections.set(connId, connInfo);
 
-    // Broadcast room status to all connections
     this.broadcastStatus();
 
     socket.addEventListener('message', async (msg) => {
       try {
-        // 1. Binary frames (High performance audio uplink/downlink)
+        // 1. Binary frames (High performance audio uplink)
         if (msg.data instanceof ArrayBuffer) {
           if (role === 'guide') {
             try {
@@ -201,7 +211,6 @@ export class TourRoom {
               }
               this.guideLang = nextGuideLang;
 
-              // Parse custom glossary terms if provided
               if (Array.isArray(data.customGlossary)) {
                 this.customGlossary = data.customGlossary.map((term: any) => {
                   if (typeof term === 'string') {
@@ -223,14 +232,12 @@ export class TourRoom {
           } 
           
           else if (data.type === 'audio_chunk') {
-            // Guide is sending real-time audio chunk (base64 PCM fallback)
             if (role === 'guide') {
               await this.handleGuideAudio(data.data, data.sampleRate);
             }
           } 
           
           else if (data.type === 'guide_text') {
-            // Guide text (STT transcription)
             if (role === 'guide') {
               await this.handleGuideText(data.text, data.isFinal);
             }
@@ -257,7 +264,6 @@ export class TourRoom {
         this.guideSocket = null;
         console.log(`[DO Room] Guide disconnected. Starting ${GUIDE_DISCONNECT_GRACE_MS}ms grace period.`);
         
-        // Start grace period before tearing down OpenAI sessions
         if (this.guideDisconnectTimer) clearTimeout(this.guideDisconnectTimer);
         this.guideDisconnectTimer = setTimeout(() => {
           console.log('[DO Room] Grace period expired without guide reconnect. Tearing down OpenAI sessions.');
@@ -338,6 +344,14 @@ export class TourRoom {
     this.openAIConnections.clear();
     this.openAIConnectionPromises.clear();
     this.openAIFailedMap.clear();
+
+    // Free Opus encoders
+    for (const opusState of this.opusEncoders.values()) {
+      try {
+        opusState.encoder.delete();
+      } catch {}
+    }
+    this.opusEncoders.clear();
   }
 
   async getOpenAIConnection(targetLang: string): Promise<OpenAIConnection | null> {
@@ -686,38 +700,115 @@ export class TourRoom {
     }
   }
 
-  // Binary-capable clients avoid the ~33% Base64 expansion. JSON remains as a fallback.
+  // Broadcast audio to all listeners of a language (Opus, PCM16, and JSON fallback)
   broadcastAudioToLanguage(lang: string, base64Data: string, sampleRate: number) {
     const sequence = ((this.audioSequences.get(lang) || 0) + 1) >>> 0;
     this.audioSequences.set(lang, sequence);
 
-    const binaryFrame = createAudioFrame(base64Data, sampleRate, sequence, Date.now());
-    let legacyMessage: string | null = null;
+    let hasOpusListeners = false;
+    let hasBinaryListeners = false;
+    let hasJsonListeners = false;
 
-    for (const [connId, conn] of this.connections) {
-      if (conn.role !== 'visitor' || conn.lang !== lang || conn.socket.readyState !== 1) continue;
+    for (const conn of this.connections.values()) {
+      if (conn.role === 'visitor' && conn.lang === lang && conn.socket.readyState === 1) {
+        if (conn.audioFormat === 'opus') hasOpusListeners = true;
+        else if (conn.audioFormat === 'binary') hasBinaryListeners = true;
+        else hasJsonListeners = true;
+      }
+    }
 
-      try {
-        if (conn.audioFormat === 'binary') {
-          conn.socket.send(binaryFrame);
-        } else {
-          legacyMessage ||= JSON.stringify({
-            type: 'audio_chunk',
-            data: base64Data,
-            sampleRate,
-            sequence,
-            sentAt: Date.now(),
-          });
-          conn.socket.send(legacyMessage);
+    if (!hasOpusListeners && !hasBinaryListeners && !hasJsonListeners) return;
+
+    const pcmBytes = base64ToBytes(base64Data);
+
+    // 1. Opus Compressed Stream (94% bandwidth reduction for 400+ users)
+    if (hasOpusListeners) {
+      let opusState = this.opusEncoders.get(lang);
+      if (!opusState) {
+        try {
+          const encoder = new OpusScript(24000, 1, OpusScript.Application.VOIP, { wasm: false });
+          opusState = { encoder, pendingPcm: new Uint8Array(0) };
+          this.opusEncoders.set(lang, opusState);
+        } catch (err) {
+          console.error('[DO Room] Failed to create Opus encoder for language:', lang, err);
         }
-        conn.failedSends = 0;
-      } catch {
-        conn.failedSends++;
-        if (conn.failedSends >= 3) {
+      }
+
+      if (opusState) {
+        const combined = new Uint8Array(opusState.pendingPcm.length + pcmBytes.length);
+        combined.set(opusState.pendingPcm, 0);
+        combined.set(pcmBytes, opusState.pendingPcm.length);
+
+        let offset = 0;
+        while (offset + OPUS_FRAME_BYTES <= combined.length) {
+          const frameSlice = combined.subarray(offset, offset + OPUS_FRAME_BYTES);
           try {
-            conn.socket.close(1011, 'Audio delivery failed');
-          } catch {}
-          this.connections.delete(connId);
+            const opusPacket = opusState.encoder.encode(frameSlice, OPUS_FRAME_SAMPLES);
+            const opusFrame = createOpusAudioFrame(new Uint8Array(opusPacket), 24000, sequence, Date.now());
+
+            for (const [connId, conn] of this.connections) {
+              if (conn.role === 'visitor' && conn.lang === lang && conn.audioFormat === 'opus' && conn.socket.readyState === 1) {
+                try {
+                  conn.socket.send(opusFrame);
+                  conn.failedSends = 0;
+                } catch {
+                  conn.failedSends++;
+                  if (conn.failedSends >= 3) {
+                    try { conn.socket.close(1011, 'Audio delivery failed'); } catch {}
+                    this.connections.delete(connId);
+                  }
+                }
+              }
+            }
+          } catch (err) {
+            console.error('[DO Room] Opus encoding error:', err);
+          }
+          offset += OPUS_FRAME_BYTES;
+        }
+        opusState.pendingPcm = combined.slice(offset);
+      }
+    }
+
+    // 2. Binary PCM16 stream
+    if (hasBinaryListeners) {
+      const binaryFrame = createAudioFrameFromBytes(pcmBytes, sampleRate, sequence, Date.now());
+      for (const [connId, conn] of this.connections) {
+        if (conn.role === 'visitor' && conn.lang === lang && conn.audioFormat === 'binary' && conn.socket.readyState === 1) {
+          try {
+            conn.socket.send(binaryFrame);
+            conn.failedSends = 0;
+          } catch {
+            conn.failedSends++;
+            if (conn.failedSends >= 3) {
+              try { conn.socket.close(1011, 'Audio delivery failed'); } catch {}
+              this.connections.delete(connId);
+            }
+          }
+        }
+      }
+    }
+
+    // 3. Legacy JSON stream
+    if (hasJsonListeners) {
+      const legacyMessage = JSON.stringify({
+        type: 'audio_chunk',
+        data: base64Data,
+        sampleRate,
+        sequence,
+        sentAt: Date.now(),
+      });
+      for (const [connId, conn] of this.connections) {
+        if (conn.role === 'visitor' && conn.lang === lang && conn.audioFormat === 'json' && conn.socket.readyState === 1) {
+          try {
+            conn.socket.send(legacyMessage);
+            conn.failedSends = 0;
+          } catch {
+            conn.failedSends++;
+            if (conn.failedSends >= 3) {
+              try { conn.socket.close(1011, 'Audio delivery failed'); } catch {}
+              this.connections.delete(connId);
+            }
+          }
         }
       }
     }

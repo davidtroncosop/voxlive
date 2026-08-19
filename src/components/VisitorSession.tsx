@@ -11,13 +11,15 @@ import {
   AlertCircle, 
   CheckCircle2, 
   Wifi, 
-  Shield 
+  Shield, 
+  Cpu 
 } from 'lucide-react';
 import { SUPPORTED_LANGUAGES } from '../types';
 import type { ConnectionStatus, TranscriptLine, NetworkQuality } from '../types';
 import { base64ToBytes, decodeAudioFrame } from '../../shared/audioProtocol';
 import { wakeLockManager } from '../utils/wakeLock';
 import { backgroundAudioManager } from '../utils/backgroundAudio';
+import { OpusDecoder } from 'opus-decoder';
 import Visualizer from './Visualizer';
 
 const MIN_JITTER_BUFFER_SECONDS = 0.035;
@@ -54,6 +56,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
   const [reconnectAttempt, setReconnectAttempt] = useState<number>(0);
   const [networkQuality, setNetworkQuality] = useState<NetworkQuality>({ rttMs: null, status: 'unknown' });
   const [droppedFrames, setDroppedFrames] = useState<number>(0);
+  const [activeCodec, setActiveCodec] = useState<'opus' | 'pcm'>('opus');
 
   const wsRef = useRef<WebSocket | null>(null);
   const isListeningRef = useRef<boolean>(false);
@@ -69,6 +72,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
   const heartbeatTimerRef = useRef<number | null>(null);
   const lastPongAtRef = useRef<number>(0);
   const clientIdRef = useRef<string>('');
+  const opusDecoderRef = useRef<any>(null);
 
   if (!clientIdRef.current) {
     clientIdRef.current = crypto.randomUUID?.() || Math.random().toString(36).slice(2);
@@ -94,7 +98,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     selectedLanguageRef.current = selectedLanguage;
   }, [selectedLanguage]);
 
-  // Web Audio Context for playing back-to-back translated PCM chunks
+  // Web Audio Context for playing audio frames
   const audioContextRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef<number>(0);
   const gainNodeRef = useRef<GainNode | null>(null);
@@ -152,7 +156,8 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
   const connectToRoom = (code: string, language: string, isReconnect: boolean) => {
     try {
       const cleanCode = code.trim().toUpperCase();
-      const socketUrl = `${wsUrl}/ws/room/${encodeURIComponent(cleanCode)}?role=visitor&lang=${language}&audio=binary&client=${encodeURIComponent(clientIdRef.current)}`;
+      // Connect requesting Opus compression for ultra-low bandwidth (94% savings)
+      const socketUrl = `${wsUrl}/ws/room/${encodeURIComponent(cleanCode)}?role=visitor&lang=${language}&audio=opus&client=${encodeURIComponent(clientIdRef.current)}`;
       const ws = new WebSocket(socketUrl);
       ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
@@ -181,7 +186,20 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
             trackAudioSequence(audioFrame.sequence);
 
             if (isListeningRef.current && !isMutedRef.current) {
-              playPcmBytes(audioFrame.pcmBytes, audioFrame.sampleRate);
+              if (audioFrame.codec === 'opus' && opusDecoderRef.current) {
+                setActiveCodec('opus');
+                try {
+                  const result = opusDecoderRef.current.decodeFrame(audioFrame.payloadBytes);
+                  if (result.samplesDecoded > 0 && result.channelData && result.channelData[0]) {
+                    playFloat32Samples(result.channelData[0], audioFrame.sampleRate);
+                  }
+                } catch (err) {
+                  console.error('[Visitor] Opus decode error:', err);
+                }
+              } else {
+                setActiveCodec('pcm');
+                playPcmBytes(audioFrame.pcmBytes, audioFrame.sampleRate);
+              }
             }
             return;
           }
@@ -210,6 +228,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
           else if (data.type === 'audio_chunk') {
             if (typeof data.sequence === 'number') trackAudioSequence(data.sequence);
             if (isListeningRef.current && !isMutedRef.current) {
+              setActiveCodec('pcm');
               playPcmBytes(base64ToBytes(data.data), data.sampleRate || 24000);
             }
           } 
@@ -331,6 +350,13 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
       audioContextRef.current = audioCtx;
       gainNodeRef.current = gainNode;
       nextStartTimeRef.current = audioCtx.currentTime;
+
+      // Initialize streaming Opus decoder
+      if (!opusDecoderRef.current) {
+        const dec = new OpusDecoder({ sampleRate: 24000, channels: 1 });
+        dec.ready.catch((err) => console.warn('[Visitor] OpusDecoder init error:', err));
+        opusDecoderRef.current = dec;
+      }
     } catch (e) {
       console.error('Failed to initialize AudioContext:', e);
     }
@@ -343,6 +369,12 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
       }
       audioContextRef.current = null;
       gainNodeRef.current = null;
+    }
+    if (opusDecoderRef.current) {
+      try {
+        opusDecoderRef.current.free();
+      } catch {}
+      opusDecoderRef.current = null;
     }
     nextStartTimeRef.current = 0;
     lastAudioSequenceRef.current = null;
@@ -363,7 +395,8 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     lastAudioSequenceRef.current = sequence;
   };
 
-  const playPcmBytes = (bytes: Uint8Array, sampleRate: number) => {
+  // Play Float32 decoded audio directly from Opus
+  const playFloat32Samples = (float32: Float32Array, sampleRate: number) => {
     const audioCtx = audioContextRef.current;
     const gainNode = gainNodeRef.current;
     if (!audioCtx || !gainNode) return;
@@ -373,29 +406,21 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     }
 
     try {
-      const alignedLength = bytes.byteLength - (bytes.byteLength % 2);
-      const pcm16 = new Int16Array(bytes.buffer, bytes.byteOffset, alignedLength / 2);
-      const float32 = new Float32Array(pcm16.length);
-      for (let i = 0; i < pcm16.length; i++) {
-        float32[i] = pcm16[i] / 32768.0;
-      }
-
       const buffer = audioCtx.createBuffer(1, float32.length, sampleRate);
-      buffer.copyToChannel(float32, 0);
+      buffer.getChannelData(0).set(float32);
 
       const source = audioCtx.createBufferSource();
       source.buffer = buffer;
       source.connect(gainNode);
 
-      // Adaptive low-latency jitter buffer based on measured network RTT
-      let adaptiveBuffer = MIN_JITTER_BUFFER_SECONDS; // 35ms default
+      let adaptiveBuffer = MIN_JITTER_BUFFER_SECONDS;
       if (networkQuality.rttMs !== null) {
         if (networkQuality.rttMs < 60) {
-          adaptiveBuffer = 0.035; // 35ms on fast networks
+          adaptiveBuffer = 0.035;
         } else if (networkQuality.rttMs < 120) {
-          adaptiveBuffer = 0.060; // 60ms on medium networks
+          adaptiveBuffer = 0.060;
         } else {
-          adaptiveBuffer = 0.095; // 95ms on high-latency networks
+          adaptiveBuffer = 0.095;
         }
       }
       if (droppedAudioChunksRef.current > 0) {
@@ -413,8 +438,19 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
       nextStartTimeRef.current = startTime + buffer.duration;
 
     } catch (e) {
-      console.error('[Visitor] Error playing PCM audio chunk:', e);
+      console.error('[Visitor] Error playing Float32 audio chunk:', e);
     }
+  };
+
+  // Play raw PCM16 fallback
+  const playPcmBytes = (bytes: Uint8Array, sampleRate: number) => {
+    const alignedLength = bytes.byteLength - (bytes.byteLength % 2);
+    const pcm16 = new Int16Array(bytes.buffer, bytes.byteOffset, alignedLength / 2);
+    const float32 = new Float32Array(pcm16.length);
+    for (let i = 0; i < pcm16.length; i++) {
+      float32[i] = pcm16[i] / 32768.0;
+    }
+    playFloat32Samples(float32, sampleRate);
   };
 
   const speakText = (text: string, langCode: string) => {
@@ -686,6 +722,19 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                 <span className="status-label">Servidor</span>
                 <span className="status-val" style={{ color: 'var(--color-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}>
                   <CheckCircle2 size={14} /> Cloudflare Edge
+                </span>
+              </div>
+
+              <div className="status-row">
+                <span className="status-label">Códec de Audio</span>
+                <span className="status-val" style={{ 
+                  color: 'var(--color-success)',
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '4px',
+                  fontWeight: 600 
+                }}>
+                  <Cpu size={14} /> {activeCodec === 'opus' ? 'Opus (~94% Ahorro)' : 'PCM16'}
                 </span>
               </div>
 
