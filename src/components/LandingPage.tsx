@@ -40,6 +40,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSelectRole }) => {
         <video className="bg-video" autoPlay muted loop playsInline>
           <source src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260808_075824_7c8a2ef3-826c-43ca-81a1-162429faa306.mp4" type="video/mp4" />
         </video>
+        <div className="bg-overlay" />
       </div>
 
       <header className="nav">

@@ -1,13 +1,14 @@
 :root {
   --bg: #ffffff;
-  --text: #0a0a0a;
-  --muted: #1a1a1a;
+  --text: #ffffff;
+  --muted: #ffffff;
   --blue: #006cd2;
   --blue-dark: #0053a3;
-  --headline-muted: #6b7378;
-  --glass: rgba(0, 0, 0, 0.13);
-  --glass-blur: 18px;
-  --glass-light: rgba(255, 255, 255, 0.28);
+  --blue-vibrant: #38bdf8;
+  --headline-muted: rgba(255, 255, 255, 0.72);
+  --glass: rgba(0, 0, 0, 0.38);
+  --glass-blur: 20px;
+  --glass-light: rgba(0, 0, 0, 0.38);
   --radius: 0;
   --font: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --pad-x: clamp(20px, 3.52vw, 64px);
@@ -23,13 +24,13 @@
   --color-primary-dark: var(--blue-dark);
   --color-secondary: #0284c7;
   --color-text-primary: #ffffff;
-  --color-text-secondary: #9ca3af;
-  --color-text-muted: #6b7280;
+  --color-text-secondary: #cbd5e1;
+  --color-text-muted: #94a3b8;
   --color-success: #10b981;
   --color-danger: #ef4444;
-  --border-light: rgba(255, 255, 255, 0.1);
-  --bg-surface: rgba(18, 20, 28, 0.85);
-  --bg-input: rgba(0, 0, 0, 0.4);
+  --border-light: rgba(255, 255, 255, 0.15);
+  --bg-surface: rgba(12, 14, 22, 0.88);
+  --bg-input: rgba(0, 0, 0, 0.45);
   --radius-sm: 0px;
   --radius-md: 0px;
   --radius-lg: 0px;
@@ -54,7 +55,7 @@ body {
 
 body {
   font-family: var(--font);
-  background: var(--bg);
+  background: #000000;
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -95,7 +96,7 @@ button {
   position: absolute;
   inset: 0;
   z-index: 0;
-  background: #ffffff;
+  background: #000000;
   pointer-events: none;
   overflow: hidden;
 }
@@ -106,6 +107,13 @@ button {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.bg-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(5, 10, 20, 0.42) 0%, rgba(5, 10, 20, 0.2) 35%, rgba(5, 10, 20, 0.68) 100%);
+  pointer-events: none;
 }
 
 .nav,
@@ -133,7 +141,9 @@ button {
   background: var(--glass);
   backdrop-filter: blur(var(--glass-blur));
   -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: var(--radius);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
 }
 
 .nav__link {
@@ -141,7 +151,7 @@ button {
   font-size: clamp(13px, 1.37vw, 15px);
   font-weight: 500;
   letter-spacing: -0.01em;
-  color: #0a0a0a;
+  color: #ffffff;
   line-height: 1;
   white-space: nowrap;
   padding-bottom: 2px;
@@ -149,10 +159,11 @@ button {
   transition: color 0.22s cubic-bezier(0.16, 1, 0.3, 1), transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
   animation: link-in 0.55s cubic-bezier(0.16, 1, 0.3, 1) backwards;
   animation-delay: var(--d, 0s);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
 }
 
 .nav__link:hover {
-  color: var(--blue);
+  color: var(--blue-vibrant);
   transform: translateY(-2px);
 }
 
@@ -163,7 +174,7 @@ button {
   left: 0;
   width: 100%;
   height: 3px;
-  background: var(--blue);
+  background: var(--blue-vibrant);
   transform: scaleX(0);
   transform-origin: left;
   transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
@@ -177,12 +188,14 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #0a0a0a;
+  color: #ffffff;
   transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.4));
 }
 
 .logo:hover {
   transform: scale(1.1);
+  color: var(--blue-vibrant);
 }
 
 .logo__svg {
@@ -225,7 +238,7 @@ button {
   display: block;
   width: 18px;
   height: 1.5px;
-  background: #0a0a0a;
+  background: #ffffff;
   transition: width 0.22s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -234,7 +247,7 @@ button {
 }
 
 .nav__burger:hover .burger__bar {
-  background: var(--blue);
+  background: var(--blue-vibrant);
 }
 
 .nav__burger:hover .burger__bar:nth-child(1),
@@ -259,22 +272,23 @@ button {
   flex-direction: column;
   gap: 0.9rem;
   padding: 16px 20px;
-  background: var(--glass);
+  background: rgba(10, 14, 24, 0.75);
   backdrop-filter: blur(var(--glass-blur));
   -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: var(--radius);
 }
 
 .mobile-menu__link {
   font-size: 1.05rem;
   font-weight: 500;
-  color: #0a0a0a;
+  color: #ffffff;
   text-decoration: none;
   transition: color 0.2s ease;
 }
 
 .mobile-menu__link:hover {
-  color: var(--blue);
+  color: var(--blue-vibrant);
 }
 
 /* Buttons (shared) */
@@ -338,6 +352,7 @@ button {
   color: #ffffff;
   animation: wipe-right 0.65s cubic-bezier(0.16, 1, 0.3, 1) backwards;
   animation-delay: 0.16s;
+  box-shadow: 0 4px 16px rgba(0, 108, 210, 0.35);
 }
 
 .btn--nav::before {
@@ -358,6 +373,7 @@ button {
 .btn--light {
   background: #ffffff;
   color: var(--blue);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
 }
 
 .btn--light::before {
@@ -371,21 +387,22 @@ button {
 
 .btn--ghost {
   padding: 12px 26px;
-  color: #0a0a0a;
-  background: rgba(255, 255, 255, 0.55);
+  color: #ffffff;
+  background: rgba(0, 0, 0, 0.38);
+  border: 1px solid rgba(255, 255, 255, 0.25);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
 }
 
 .btn--ghost::before {
-  background: rgba(255, 255, 255, 0.78);
+  background: rgba(255, 255, 255, 0.15);
   z-index: 0;
 }
 
 .btn--ghost:hover {
-  background: rgba(255, 255, 255, 0.55);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
+  background: rgba(0, 0, 0, 0.48);
+  border-color: rgba(255, 255, 255, 0.45);
 }
 
 /* Hero */
@@ -401,22 +418,24 @@ button {
   height: clamp(34px, 3.6vw, 42px);
   padding: 0 18px 0 14px;
   background: var(--glass-light);
-  border: 1px solid rgba(0, 108, 210, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.22);
   backdrop-filter: blur(var(--glass-blur));
   -webkit-backdrop-filter: blur(var(--glass-blur));
-  color: var(--muted);
+  color: #ffffff;
   font-size: clamp(13px, 1.35vw, 15px);
   font-weight: 500;
   letter-spacing: -0.01em;
   border-radius: var(--radius);
   width: fit-content;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
 }
 
 .badge__indicator {
   width: 14px;
   height: 14px;
   background: #ffffff;
-  border: 2px solid var(--blue);
+  border: 2px solid var(--blue-vibrant);
   flex-shrink: 0;
 }
 
@@ -426,7 +445,8 @@ button {
   line-height: 1.18;
   letter-spacing: -0.038em;
   margin-top: clamp(22px, 2.8vw, 36px);
-  color: #0a0a0a;
+  color: #ffffff;
+  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.55);
 }
 
 .headline__mask {
@@ -471,13 +491,14 @@ button {
 }
 
 .headline__accent::before {
-  color: #7eb6ee;
+  color: #93c5fd;
   animation: accent-fill 1.05s cubic-bezier(0.4, 0, 0.2, 1) 0.7s forwards;
 }
 
 .headline__accent::after {
-  color: var(--blue);
+  color: var(--blue-vibrant);
   animation: accent-fill 1.05s cubic-bezier(0.4, 0, 0.2, 1) 1.08s forwards;
+  filter: drop-shadow(0 0 12px rgba(56, 189, 248, 0.4));
 }
 
 .hero__actions {
@@ -502,6 +523,7 @@ button {
   font-weight: 300;
   line-height: 1.5;
   letter-spacing: -0.01em;
+  text-shadow: 0 2px 16px rgba(0, 0, 0, 0.75);
 }
 
 .lede__rise {
@@ -515,7 +537,7 @@ button {
   position: fixed;
   inset: 0;
   z-index: 100;
-  background: rgba(0, 0, 0, 0.65);
+  background: rgba(0, 0, 0, 0.72);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   display: flex;
@@ -525,8 +547,8 @@ button {
 }
 
 .modal-card {
-  background: rgba(12, 14, 20, 0.94);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(12, 14, 22, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: var(--radius);
   width: 100%;
   max-width: 440px;
@@ -554,14 +576,14 @@ button {
 
 .modal-subtitle {
   font-size: 13px;
-  color: var(--headline-muted);
+  color: var(--color-text-secondary);
   line-height: 1.4;
 }
 
 .modal-close-btn {
   background: none;
   border: none;
-  color: #9ca3af;
+  color: #94a3b8;
   font-size: 26px;
   line-height: 1;
   cursor: pointer;
@@ -582,19 +604,19 @@ button {
 .modal-input-group {
   display: flex;
   align-items: center;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: var(--radius);
   padding: 0 16px;
   transition: border-color 0.2s ease;
 }
 
 .modal-input-group:focus-within {
-  border-color: var(--blue);
+  border-color: var(--blue-vibrant);
 }
 
 .modal-hash {
-  color: var(--blue);
+  color: var(--blue-vibrant);
   font-size: 20px;
   font-weight: 700;
   margin-right: 8px;
@@ -615,7 +637,7 @@ button {
 }
 
 .modal-input::placeholder {
-  color: #6b7280;
+  color: #64748b;
   font-size: 13px;
   font-weight: 400;
   letter-spacing: 0;
@@ -651,14 +673,6 @@ button {
   z-index: 1;
 }
 
-.bg-overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(10, 10, 10, 0.82);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-}
-
 .session-nav {
   display: flex;
   justify-content: space-between;
@@ -666,7 +680,7 @@ button {
   margin-bottom: 28px;
   position: relative;
   z-index: 2;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
   padding-bottom: 16px;
 }
 
@@ -688,13 +702,13 @@ button {
   padding: 8px 18px;
   font-size: 13px;
   color: #ffffff;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: var(--radius);
 }
 
 .session-back-btn:hover {
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.18);
   color: #ffffff;
 }
 
@@ -720,10 +734,10 @@ button {
 }
 
 .session-container .glass-card {
-  background: rgba(18, 20, 28, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
+  background: rgba(14, 17, 26, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
 }
 
 .session-container .btn-primary {
@@ -738,7 +752,7 @@ button {
 
 .session-container .btn-secondary {
   background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   color: #ffffff;
   border-radius: 0;
 }
@@ -893,7 +907,7 @@ button {
   }
 
   .headline__accent {
-    color: var(--blue) !important;
+    color: var(--blue-vibrant) !important;
   }
 
   .headline__accent::before,
