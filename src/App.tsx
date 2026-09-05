@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Radio, ShieldCheck, Sparkles } from 'lucide-react';
+import { Radio } from 'lucide-react';
 import LandingPage from './components/LandingPage';
 import GuideSession from './components/GuideSession';
 import VisitorSession from './components/VisitorSession';
@@ -65,24 +65,14 @@ function App() {
       <header className="app-header">
         <a href="/" className="logo-container" onClick={handleLogoClick}>
           <div className="logo-icon">
-            <Radio size={22} color="white" />
+            <Radio size={18} color="white" />
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <span className="logo-text">Voxlive</span>
-            <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', letterSpacing: '0.8px', textTransform: 'uppercase', marginTop: '-3px' }}>
-              Live Voice AI
-            </span>
-          </div>
+          <span className="logo-text">Voxlive</span>
         </a>
         
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <span className="badge badge-edge">
-            <span className="pulse-dot green-dot"></span>
-            Edge Activo &bull; &lt;800ms
-          </span>
-          <span className="badge badge-cloud desktop-only">
-            <ShieldCheck size={14} /> CF Edge
-          </span>
+        <div className="status-online">
+          <span className="online-dot"></span>
+          <span>En línea</span>
         </div>
       </header>
 
@@ -108,17 +98,8 @@ function App() {
 
       {/* Footer */}
       <footer className="app-footer">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Sparkles size={14} color="var(--color-primary)" />
-          <span>&copy; {new Date().getFullYear()} Voxlive &bull; Traducción de voz simultánea en tiempo real.</span>
-        </div>
-        <div className="footer-links">
-          <a href="#" className="footer-link" onClick={(e) => { e.preventDefault(); alert("Voxlive utiliza OpenAI GPT Realtime y Cloudflare Durable Objects para transmisión de voz a voz ultra-rápida a cientos de oyentes."); }}>
-            Tecnología
-          </a>
-          <span style={{ color: 'rgba(255,255,255,0.1)' }}>&bull;</span>
-          <span style={{ color: 'var(--color-text-muted)' }}>v2.2 Event Ready</span>
-        </div>
+        <span>Voxlive &bull; Audio y traducción en vivo</span>
+        <span className="footer-version">v2.2</span>
       </footer>
     </div>
   );
