@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Compass, ShieldCheck } from 'lucide-react';
+import { Radio, ShieldCheck, Sparkles } from 'lucide-react';
 import LandingPage from './components/LandingPage';
 import GuideSession from './components/GuideSession';
 import VisitorSession from './components/VisitorSession';
@@ -43,6 +43,13 @@ function App() {
 
   const wsUrl = getWsUrl();
 
+  const handleSelectRole = (selectedRole: UserRole, roomCode?: string) => {
+    if (roomCode) {
+      setInitialRoomCode(roomCode.toUpperCase());
+    }
+    setRole(selectedRole);
+  };
+
   const handleLogoClick = (e: React.MouseEvent) => {
     e.preventDefault();
     setRole(null);
@@ -58,14 +65,23 @@ function App() {
       <header className="app-header">
         <a href="/" className="logo-container" onClick={handleLogoClick}>
           <div className="logo-icon">
-            <Compass size={22} color="white" />
+            <Radio size={22} color="white" />
           </div>
-          <span className="logo-text">Voxlive</span>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <span className="logo-text">Voxlive</span>
+            <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', letterSpacing: '0.8px', textTransform: 'uppercase', marginTop: '-3px' }}>
+              Live Voice AI
+            </span>
+          </div>
         </a>
         
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <span className="badge badge-cloud">
-            <ShieldCheck size={14} /> CF Pages + Workers
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <span className="badge badge-edge">
+            <span className="pulse-dot green-dot"></span>
+            Edge Activo &bull; &lt;800ms
+          </span>
+          <span className="badge badge-cloud desktop-only">
+            <ShieldCheck size={14} /> CF Edge
           </span>
         </div>
       </header>
@@ -73,7 +89,7 @@ function App() {
       {/* Main Content Areas */}
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         {role === null && (
-          <LandingPage onSelectRole={setRole} />
+          <LandingPage onSelectRole={handleSelectRole} />
         )}
         
         {role === 'guide' && (
@@ -92,12 +108,16 @@ function App() {
 
       {/* Footer */}
       <footer className="app-footer">
-        <div>
-          &copy; {new Date().getFullYear()} Voxlive — Traducción de voz en tiempo real.
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Sparkles size={14} color="var(--color-primary)" />
+          <span>&copy; {new Date().getFullYear()} Voxlive &bull; Traducción de voz simultánea en tiempo real.</span>
         </div>
         <div className="footer-links">
-          <a href="#" className="footer-link" onClick={(e) => { e.preventDefault(); alert("Voxlive usa GPT Realtime Translate y Cloudflare Edge para traducción de voz a voz con baja latencia."); }}>Tecnología</a>
-          <a href="https://github.com/vitejs/vite" target="_blank" rel="noopener noreferrer" className="footer-link">GitHub</a>
+          <a href="#" className="footer-link" onClick={(e) => { e.preventDefault(); alert("Voxlive utiliza OpenAI GPT Realtime y Cloudflare Durable Objects para transmisión de voz a voz ultra-rápida a cientos de oyentes."); }}>
+            Tecnología
+          </a>
+          <span style={{ color: 'rgba(255,255,255,0.1)' }}>&bull;</span>
+          <span style={{ color: 'var(--color-text-muted)' }}>v2.2 Event Ready</span>
         </div>
       </footer>
     </div>

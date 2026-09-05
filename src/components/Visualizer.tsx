@@ -15,15 +15,21 @@ export const Visualizer: React.FC<VisualizerProps> = ({
 
   useEffect(() => {
     if (!isActive) {
-      setHeights(Array(barCount).fill(10));
+      setHeights(Array(barCount).fill(8));
       return;
     }
 
     const interval = setInterval(() => {
-      setHeights(prev => 
-        prev.map(() => Math.floor(Math.random() * 55) + 15) // Random height between 15px and 70px
+      setHeights(
+        Array.from({ length: barCount }, (_, i) => {
+          const normalized = i / (barCount - 1); // 0 to 1
+          const envelope = Math.sin(normalized * Math.PI); // 0 -> 1 -> 0 bell curve
+          const baseHeight = 8;
+          const dynamicBoost = (Math.random() * 0.7 + 0.3) * 58 * envelope;
+          return Math.round(baseHeight + dynamicBoost);
+        })
       );
-    }, 100);
+    }, 85);
 
     return () => clearInterval(interval);
   }, [isActive, barCount]);

@@ -44,6 +44,9 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
   const [roomCode, setRoomCode] = useState<string>('');
   const [hostToken, setHostToken] = useState<string>('');
   const [activeListeners, setActiveListeners] = useState<number>(0);
+  const [audioListeners, setAudioListeners] = useState<number>(0);
+  const [textOnlyListeners, setTextOnlyListeners] = useState<number>(0);
+  const [langCounts, setLangCounts] = useState<Record<string, number>>({});
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [transcripts, setTranscripts] = useState<{ id: string; text: string; timestamp: string }[]>([]);
   const [providerReady, setProviderReady] = useState<boolean | null>(null);
@@ -53,6 +56,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
   const [audioMode, setAudioMode] = useState<'worklet' | 'scriptProcessor'>('worklet');
   const [networkQuality, setNetworkQuality] = useState<NetworkQuality>({ rttMs: null, status: 'unknown' });
   const [showQrModal, setShowQrModal] = useState<boolean>(false);
+  const [isProjectorMode, setIsProjectorMode] = useState<boolean>(false);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
 
   // Custom glossary
@@ -103,7 +107,9 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
       const generatedCode = roomCode || generateCleanRoomCode();
       setRoomCode(generatedCode);
 
-      const existingToken = hostToken || sessionStorage.getItem(`hostToken_${generatedCode}`) || '';
+      const existingToken = hostToken || 
+        sessionStorage.getItem(`hostToken_${generatedCode}`) || 
+        localStorage.getItem(`hostToken_${generatedCode}`) || '';
       const socketUrl = `${wsUrl}/ws/room/${generatedCode}?role=guide&lang=${selectedLanguage}&audio=binary&hostToken=${encodeURIComponent(existingToken)}`;
       const ws = new WebSocket(socketUrl);
       ws.binaryType = 'arraybuffer';
@@ -132,12 +138,18 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
 
           if (data.type === 'status_update') {
             setActiveListeners(data.listenersCount || 0);
+            if (typeof data.audioListeners === 'number') setAudioListeners(data.audioListeners);
+            if (typeof data.textOnlyListeners === 'number') setTextOnlyListeners(data.textOnlyListeners);
+            if (data.langCounts) setLangCounts(data.langCounts);
           } else if (data.type === 'provider_status') {
             const ready = Boolean(data.configured);
             setProviderReady(ready);
             if (data.hostToken) {
               setHostToken(data.hostToken);
-              sessionStorage.setItem(`hostToken_${generatedCode}`, data.hostToken);
+              try {
+                sessionStorage.setItem(`hostToken_${generatedCode}`, data.hostToken);
+                localStorage.setItem(`hostToken_${generatedCode}`, data.hostToken);
+              } catch {}
             }
             if (!ready) {
               setErrorMsg(data.message || 'El motor seleccionado no tiene una API key configurada en el servidor.');
@@ -658,11 +670,51 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
               </div>
 
               <div className="status-row">
-                <span className="status-label">Oyentes Conectados</span>
-                <span className="status-val" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span className="status-label">Oyentes en Sala</span>
+                <span className="status-val" style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
                   <Users size={16} /> {activeListeners}
                 </span>
               </div>
+
+              {activeListeners > 0 && (
+                <div style={{
+                  fontSize: '11px',
+                  color: 'var(--color-text-secondary)',
+                  padding: '6px 10px',
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  borderRadius: '6px',
+                  marginTop: '-4px',
+                  marginBottom: '8px',
+                  display: 'flex',
+                  justifyContent: 'space-between'
+                }}>
+                  <span>🎧 Audio: <strong style={{ color: 'var(--color-secondary)' }}>{audioListeners}</strong></span>
+                  <span>📝 Subtítulos: <strong style={{ color: '#10b981' }}>{textOnlyListeners}</strong></span>
+                </div>
+              )}
+
+              {Object.keys(langCounts).length > 0 && (
+                <div style={{
+                  fontSize: '11px',
+                  color: 'var(--color-text-secondary)',
+                  padding: '6px 10px',
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  borderRadius: '6px',
+                  marginBottom: '8px'
+                }}>
+                  <div style={{ marginBottom: '4px', color: 'var(--color-text-muted)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Distribución de Idiomas:</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                    {Object.entries(langCounts).map(([lCode, count]) => {
+                      const lInfo = SUPPORTED_LANGUAGES.find(l => l.code === lCode);
+                      return (
+                        <span key={lCode} style={{ background: 'rgba(255, 255, 255, 0.06)', padding: '2px 6px', borderRadius: '4px' }}>
+                          {lInfo?.flag || '🌐'} {lInfo?.name || lCode}: <strong>{count}</strong>
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               <div className="status-row">
                 <span className="status-label">Idioma de origen</span>
@@ -715,7 +767,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
         </div>
       )}
 
-      {/* QR Modal for large display */}
+      {/* QR Modal with Projector Mode */}
       {showQrModal && (
         <div style={{
           position: 'fixed',
@@ -723,41 +775,102 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
           left: 0,
           right: 0,
           bottom: 0,
-          background: 'rgba(0, 0, 0, 0.85)',
-          backdropFilter: 'blur(8px)',
+          background: isProjectorMode ? '#080a10' : 'rgba(0, 0, 0, 0.85)',
+          backdropFilter: isProjectorMode ? 'none' : 'blur(8px)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           zIndex: 1000,
-          padding: '20px'
+          padding: isProjectorMode ? '32px 20px' : '20px'
         }}>
-          <div className="glass-card" style={{ maxWidth: '420px', width: '100%', textAlign: 'center', padding: '32px' }}>
-            <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '24px', marginBottom: '8px' }}>
-              Escanea para Unirte
-            </h3>
-            <p style={{ color: 'var(--color-text-secondary)', fontSize: '14px', marginBottom: '24px' }}>
-              Sala: <strong style={{ color: 'var(--color-secondary)', fontSize: '18px' }}>{roomCode}</strong>
-            </p>
+          <div className="glass-card" style={{ 
+            maxWidth: isProjectorMode ? '680px' : '420px', 
+            width: '100%', 
+            textAlign: 'center', 
+            padding: isProjectorMode ? '40px 32px' : '32px',
+            boxShadow: isProjectorMode ? '0 0 80px rgba(6, 182, 212, 0.2)' : undefined,
+            border: isProjectorMode ? '1px solid rgba(6, 182, 212, 0.4)' : undefined
+          }}>
+            {isProjectorMode ? (
+              <>
+                <div style={{ 
+                  display: 'inline-flex', 
+                  alignItems: 'center', 
+                  gap: '8px', 
+                  padding: '6px 14px', 
+                  background: 'rgba(6, 182, 212, 0.12)', 
+                  borderRadius: '20px', 
+                  color: 'var(--color-secondary)', 
+                  fontSize: '13px', 
+                  fontWeight: 600, 
+                  marginBottom: '16px' 
+                }}>
+                  <Sparkles size={16} /> Modo Proyector para Auditorio
+                </div>
+                <h2 style={{ fontFamily: 'var(--font-heading)', fontSize: '28px', fontWeight: 700, marginBottom: '6px', color: '#ffffff' }}>
+                  Traducción en Vivo del Evento
+                </h2>
+                <p style={{ color: 'var(--color-text-secondary)', fontSize: '15px', marginBottom: '24px', maxWidth: '520px', margin: '0 auto 24px auto' }}>
+                  Conéctate a la red Wi-Fi del auditorio y escanea con tu móvil para escuchar la traducción simultánea en tu idioma.
+                </p>
 
-            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
-              <div style={{ background: '#ffffff', padding: '16px', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
-                <QRCode value={getInviteUrl()} size={240} fgColor="#000000" bgColor="#ffffff" />
-              </div>
-            </div>
+                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '20px' }}>
+                  <div style={{ background: '#ffffff', padding: '20px', borderRadius: '20px', boxShadow: '0 12px 48px rgba(0,0,0,0.6)' }}>
+                    <QRCode value={getInviteUrl()} size={280} fgColor="#000000" bgColor="#ffffff" />
+                  </div>
+                </div>
 
-            <div style={{ wordBreak: 'break-all', fontSize: '12px', color: 'var(--color-secondary)', marginBottom: '20px', background: 'rgba(255,255,255,0.04)', padding: '8px 12px', borderRadius: '8px' }}>
-              {getInviteUrl()}
-            </div>
+                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '16px', marginBottom: '24px', flexWrap: 'wrap' }}>
+                  <div style={{ background: 'rgba(255, 255, 255, 0.06)', padding: '10px 18px', borderRadius: '10px', fontSize: '15px' }}>
+                    Código de sala: <strong style={{ color: 'var(--color-secondary)', fontSize: '22px', letterSpacing: '3px' }}>{roomCode}</strong>
+                  </div>
+                  <div style={{ background: 'rgba(255, 255, 255, 0.06)', padding: '10px 18px', borderRadius: '10px', fontSize: '14px', color: 'var(--color-text-secondary)' }}>
+                    🎧 Conecta tus auriculares
+                  </div>
+                </div>
 
-            <div style={{ display: 'flex', gap: '12px' }}>
-              <button className="btn btn-secondary" onClick={copyInviteLink} style={{ flex: 1 }}>
-                {copiedLink ? <Check size={16} /> : <Copy size={16} />}
-                {copiedLink ? '¡Enlace Copiado!' : 'Copiar Enlace'}
-              </button>
-              <button className="btn btn-primary" onClick={() => setShowQrModal(false)} style={{ flex: 1 }}>
-                Cerrar
-              </button>
-            </div>
+                <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', maxWidth: '360px', margin: '0 auto' }}>
+                  <button className="btn btn-secondary" onClick={() => setIsProjectorMode(false)} style={{ flex: 1 }}>
+                    Vista Normal
+                  </button>
+                  <button className="btn btn-primary" onClick={() => { setIsProjectorMode(false); setShowQrModal(false); }} style={{ flex: 1 }}>
+                    Cerrar
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '24px', marginBottom: '8px' }}>
+                  Escanea para Unirte
+                </h3>
+                <p style={{ color: 'var(--color-text-secondary)', fontSize: '14px', marginBottom: '24px' }}>
+                  Sala: <strong style={{ color: 'var(--color-secondary)', fontSize: '18px' }}>{roomCode}</strong>
+                </p>
+
+                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
+                  <div style={{ background: '#ffffff', padding: '16px', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
+                    <QRCode value={getInviteUrl()} size={240} fgColor="#000000" bgColor="#ffffff" />
+                  </div>
+                </div>
+
+                <div style={{ wordBreak: 'break-all', fontSize: '12px', color: 'var(--color-secondary)', marginBottom: '20px', background: 'rgba(255,255,255,0.04)', padding: '8px 12px', borderRadius: '8px' }}>
+                  {getInviteUrl()}
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                  <button className="btn btn-secondary" onClick={copyInviteLink} style={{ flex: 1 }}>
+                    {copiedLink ? <Check size={16} /> : <Copy size={16} />}
+                    {copiedLink ? '¡Copiado!' : 'Copiar Enlace'}
+                  </button>
+                  <button className="btn btn-secondary" onClick={() => setIsProjectorMode(true)} style={{ flex: 1 }}>
+                    <Sparkles size={16} /> Modo Proyector
+                  </button>
+                </div>
+                <button className="btn btn-primary" onClick={() => setShowQrModal(false)} style={{ width: '100%' }}>
+                  Cerrar
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

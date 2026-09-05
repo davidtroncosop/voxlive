@@ -15,7 +15,7 @@ import {
   Cpu 
 } from 'lucide-react';
 import { SUPPORTED_LANGUAGES } from '../types';
-import type { ConnectionStatus, TranscriptLine, NetworkQuality } from '../types';
+import type { ConnectionStatus, TranscriptLine, NetworkQuality, AudioMode } from '../types';
 import { base64ToBytes, decodeAudioFrame } from '../../shared/audioProtocol';
 import { wakeLockManager } from '../utils/wakeLock';
 import { backgroundAudioManager } from '../utils/backgroundAudio';
@@ -45,6 +45,9 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
   const [roomCode, setRoomCode] = useState<string>(initialRoomCode.toUpperCase());
   const [selectedLanguage, setSelectedLanguage] = useState<string>(initialLang);
   const [isListening, setIsListening] = useState<boolean>(false);
+  const [audioMode, setAudioMode] = useState<AudioMode>('audio');
+  const [audioListeners, setAudioListeners] = useState<number>(0);
+  const [textOnlyListeners, setTextOnlyListeners] = useState<number>(0);
   const [volume, setVolume] = useState<number>(85);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [transcripts, setTranscripts] = useState<TranscriptLine[]>([]);
@@ -58,6 +61,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
 
   const wsRef = useRef<WebSocket | null>(null);
   const isListeningRef = useRef<boolean>(false);
+  const audioModeRef = useRef<AudioMode>('audio');
   const isMutedRef = useRef<boolean>(false);
   const selectedLanguageRef = useRef<string>(initialLang);
   const lastAudioSequenceRef = useRef<number | null>(null);
@@ -97,6 +101,31 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
   useEffect(() => {
     selectedLanguageRef.current = selectedLanguage;
   }, [selectedLanguage]);
+
+  useEffect(() => {
+    audioModeRef.current = audioMode;
+  }, [audioMode]);
+
+  const handleModeChange = (newMode: AudioMode) => {
+    setAudioMode(newMode);
+    audioModeRef.current = newMode;
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'set_audio_mode',
+        audio: newMode === 'subtitles' ? 'none' : 'binary',
+      }));
+    }
+    if (newMode === 'subtitles') {
+      setIsListening(false);
+      resetPlaybackQueue();
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    } else {
+      setIsListening(true);
+      initAudioContext();
+    }
+  };
 
   // Web Audio Context for playing audio frames
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -141,7 +170,10 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     const attempt = reconnectAttemptRef.current + 1;
     reconnectAttemptRef.current = attempt;
     setReconnectAttempt(attempt);
-    const delay = Math.min(1000 * 2 ** Math.min(attempt - 1, 4), RECONNECT_MAX_DELAY_MS);
+    // Exponential backoff with randomized jitter to prevent reconnect stampedes
+    const baseDelay = Math.min(1000 * 2 ** Math.min(attempt - 1, 4), RECONNECT_MAX_DELAY_MS);
+    const jitter = Math.floor(Math.random() * 800);
+    const delay = baseDelay + jitter;
     setStatus('connecting');
     setErrorMsg(`Conexión interrumpida. Reconectando automáticamente (intento ${attempt})...`);
 
@@ -156,7 +188,8 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
   const connectToRoom = (code: string, language: string, isReconnect: boolean) => {
     try {
       const cleanCode = code.trim().toUpperCase();
-      const socketUrl = `${wsUrl}/ws/room/${encodeURIComponent(cleanCode)}?role=visitor&lang=${language}&audio=binary&client=${encodeURIComponent(clientIdRef.current)}`;
+      const audioParam = audioModeRef.current === 'subtitles' ? 'none' : 'binary';
+      const socketUrl = `${wsUrl}/ws/room/${encodeURIComponent(cleanCode)}?role=visitor&lang=${language}&audio=${audioParam}&client=${encodeURIComponent(clientIdRef.current)}`;
       const ws = new WebSocket(socketUrl);
       ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
@@ -172,9 +205,13 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
         setErrorMsg('');
         resetPlaybackQueue();
         startHeartbeat(ws);
-        if (firstConnection && !isReconnect) setIsListening(true);
+        if (firstConnection && !isReconnect && audioModeRef.current === 'audio') {
+          setIsListening(true);
+        }
         audioContextRef.current?.resume().catch(() => {
-          setErrorMsg('Toca “Escuchar” para activar el audio en tu dispositivo.');
+          if (audioModeRef.current === 'audio') {
+            setErrorMsg('Toca “Escuchar” para activar el audio en tu dispositivo.');
+          }
         });
       };
 
@@ -184,7 +221,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
             const audioFrame = decodeAudioFrame(event.data);
             trackAudioSequence(audioFrame.sequence);
 
-            if (isListeningRef.current && !isMutedRef.current) {
+            if (audioModeRef.current === 'audio' && isListeningRef.current && !isMutedRef.current) {
               playPcmBytes(audioFrame.pcmBytes, audioFrame.sampleRate);
             }
             return;
@@ -206,6 +243,8 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
           
           if (data.type === 'status_update') {
             setListenersCount(data.listenersCount || 0);
+            if (typeof data.audioListeners === 'number') setAudioListeners(data.audioListeners);
+            if (typeof data.textOnlyListeners === 'number') setTextOnlyListeners(data.textOnlyListeners);
             if (data.guideLanguage) {
               setGuideLang(data.guideLanguage);
             }
@@ -213,8 +252,8 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
           
           else if (data.type === 'audio_chunk') {
             if (typeof data.sequence === 'number') trackAudioSequence(data.sequence);
-            if (isListeningRef.current && !isMutedRef.current) {
-              playPcmBytes(base64ToBytes(data.data), data.sampleRate || 24000);
+            if (audioModeRef.current === 'audio' && isListeningRef.current && !isMutedRef.current) {
+              playPcmBytes(base64ToBytes(data.data), data.sampleRate || 16000);
             }
           } 
           
@@ -239,7 +278,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
             });
 
             // Simulator TTS fallback
-            if (!data.hasAudio && isListeningRef.current && !isMutedRef.current && newLine.isFinal && newLine.translatedText) {
+            if (audioModeRef.current === 'audio' && !data.hasAudio && isListeningRef.current && !isMutedRef.current && newLine.isFinal && newLine.translatedText) {
               speakText(newLine.translatedText, selectedLanguageRef.current);
             }
           }
@@ -286,7 +325,9 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
       return;
     }
 
-    initAudioContext();
+    if (audioMode === 'audio') {
+      initAudioContext();
+    }
     clearReconnectTimer();
     shouldReconnectRef.current = true;
     hasConnectedOnceRef.current = false;
@@ -298,7 +339,14 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     setErrorMsg('');
     setRoomCode(code);
     setRoomCodeInput(code);
-    connectToRoom(code, selectedLanguage, false);
+
+    // Add brief random jitter (0-250ms) to stagger connection requests when 450 attendees scan QR simultaneously
+    const jitter = Math.floor(Math.random() * 250);
+    window.setTimeout(() => {
+      if (shouldReconnectRef.current && roomCodeRef.current === code) {
+        connectToRoom(code, selectedLanguage, false);
+      }
+    }, jitter);
   };
 
   const leaveRoom = () => {
@@ -572,78 +620,203 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                 </div>
               )}
 
-              <div className="action-box" style={{ background: 'rgba(6, 182, 212, 0.03)', border: '1px solid rgba(6, 182, 212, 0.15)' }}>
-                <div className="waves-container">
-                  {status === 'connected' && isListening && !isMuted ? (
-                    <>
-                      <div className="wave-circle"></div>
-                      <div className="wave-circle"></div>
-                      <div className="wave-circle"></div>
-                      <div className="wave-center">
-                        <Volume2 size={32} />
-                      </div>
-                    </>
-                  ) : (
-                    <div className="wave-center" style={{ background: 'var(--color-text-muted)', boxShadow: 'none' }}>
-                      <VolumeX size={32} />
-                    </div>
-                  )}
-                </div>
-
-                <div className="action-mic-label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  {status === 'connecting' ? (
-                    'Reconectando...'
-                  ) : isListening ? (
-                    <>
-                      <span className="pulse-dot" style={{ backgroundColor: 'var(--color-secondary)' }}></span>
-                      Escuchando traducción
-                    </>
-                  ) : (
-                    'Transmisión pausada'
-                  )}
-                </div>
-
-                <p style={{ color: 'var(--color-text-secondary)', fontSize: '14px', maxWidth: '360px', marginTop: '-8px' }}>
-                  {status === 'connecting'
-                    ? 'Conservaremos tu sesión y el audio continuará automáticamente.'
-                    : isListening
-                    ? `El audio se traduce al ${SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.name}.`
-                    : 'Activa la audición para empezar a reproducir la traducción.'}
-                </p>
-
-                {/* Volume bar */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', width: '100%', maxWidth: '260px', marginTop: '12px' }}>
-                  <button 
-                    onClick={() => setIsMuted(!isMuted)} 
-                    style={{ background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
-                  >
-                    {isMuted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
-                  </button>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={volume}
-                    onChange={(e) => {
-                      setVolume(Number(e.target.value));
-                      if (isMuted) setIsMuted(false);
-                    }}
-                    style={{
-                      flex: 1,
-                      accentColor: 'var(--color-secondary)',
-                      height: '4px',
-                      borderRadius: 'var(--radius-full)',
-                      background: 'rgba(255, 255, 255, 0.1)',
-                      cursor: 'pointer'
-                    }}
-                  />
-                  <span style={{ fontSize: '12px', width: '30px', textAlign: 'right', color: 'var(--color-text-secondary)' }}>
-                    {isMuted ? '0' : volume}%
-                  </span>
-                </div>
-
-                <Visualizer isActive={status === 'connected' && isListening && !isMuted} color="secondary" />
+              {/* High-Scale Mode Switcher (Audio vs Subtitles-Only) */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: '8px',
+                background: 'rgba(255, 255, 255, 0.04)',
+                padding: '4px',
+                borderRadius: '12px',
+                marginBottom: '20px'
+              }}>
+                <button
+                  type="button"
+                  onClick={() => handleModeChange('audio')}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    padding: '10px 14px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    background: audioMode === 'audio' ? 'var(--color-secondary)' : 'transparent',
+                    color: audioMode === 'audio' ? '#000000' : 'var(--color-text-secondary)',
+                    fontWeight: 600,
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  <Headphones size={16} /> Audio en Vivo (HD)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleModeChange('subtitles')}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    padding: '10px 14px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    background: audioMode === 'subtitles' ? 'var(--color-secondary)' : 'transparent',
+                    color: audioMode === 'subtitles' ? '#000000' : 'var(--color-text-secondary)',
+                    fontWeight: 600,
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  <Globe size={16} /> Solo Subtítulos (Ahorro)
+                </button>
               </div>
+
+              <div className="action-box" style={{ background: 'rgba(6, 182, 212, 0.03)', border: '1px solid rgba(6, 182, 212, 0.15)' }}>
+                {audioMode === 'subtitles' ? (
+                  <div style={{ padding: '24px 16px', textAlign: 'center' }}>
+                    <div style={{
+                      width: '64px',
+                      height: '64px',
+                      borderRadius: '50%',
+                      background: 'rgba(6, 182, 212, 0.12)',
+                      color: 'var(--color-secondary)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      margin: '0 auto 16px auto'
+                    }}>
+                      <Globe size={32} />
+                    </div>
+                    <h4 style={{ fontSize: '17px', fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: '6px' }}>
+                      Modo Solo Subtítulos Activo
+                    </h4>
+                    <p style={{ color: 'var(--color-text-secondary)', fontSize: '13px', maxWidth: '420px', margin: '0 auto', lineHeight: '1.5' }}>
+                      Estás recibiendo la traducción escrita en tiempo real con <strong>0 kbps</strong> de consumo de audio. Ideal para salas congestionadas o si no tienes auriculares.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="waves-container">
+                      {status === 'connected' && isListening && !isMuted ? (
+                        <>
+                          <div className="wave-circle"></div>
+                          <div className="wave-circle"></div>
+                          <div className="wave-circle"></div>
+                          <div className="wave-center">
+                            <Volume2 size={32} />
+                          </div>
+                        </>
+                      ) : (
+                        <div className="wave-center" style={{ background: 'var(--color-text-muted)', boxShadow: 'none' }}>
+                          <VolumeX size={32} />
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="action-mic-label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      {status === 'connecting' ? (
+                        'Reconectando...'
+                      ) : isListening ? (
+                        <>
+                          <span className="pulse-dot" style={{ backgroundColor: 'var(--color-secondary)' }}></span>
+                          Escuchando traducción
+                        </>
+                      ) : (
+                        'Transmisión pausada'
+                      )}
+                    </div>
+
+                    <p style={{ color: 'var(--color-text-secondary)', fontSize: '14px', maxWidth: '360px', marginTop: '-8px' }}>
+                      {status === 'connecting'
+                        ? 'Conservaremos tu sesión y el audio continuará automáticamente.'
+                        : isListening
+                        ? `El audio se traduce al ${SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.name}.`
+                        : 'Activa la audición para empezar a reproducir la traducción.'}
+                    </p>
+
+                    {/* Volume bar */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', width: '100%', maxWidth: '260px', marginTop: '12px' }}>
+                      <button 
+                        onClick={() => setIsMuted(!isMuted)} 
+                        style={{ background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
+                      >
+                        {isMuted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
+                      </button>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={volume}
+                        onChange={(e) => {
+                          setVolume(Number(e.target.value));
+                          if (isMuted) setIsMuted(false);
+                        }}
+                        style={{
+                          flex: 1,
+                          accentColor: 'var(--color-secondary)',
+                          height: '4px',
+                          borderRadius: 'var(--radius-full)',
+                          background: 'rgba(255, 255, 255, 0.1)',
+                          cursor: 'pointer'
+                        }}
+                      />
+                      <span style={{ fontSize: '12px', width: '30px', textAlign: 'right', color: 'var(--color-text-secondary)' }}>
+                        {isMuted ? '0' : volume}%
+                      </span>
+                    </div>
+
+                    <Visualizer isActive={status === 'connected' && isListening && !isMuted} color="secondary" />
+                  </>
+                )}
+              </div>
+
+              {/* Battery & Background Audio Advice */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                background: 'rgba(16, 185, 129, 0.08)',
+                border: '1px solid rgba(16, 185, 129, 0.2)',
+                borderRadius: '8px',
+                padding: '10px 14px',
+                fontSize: '12px',
+                color: 'var(--color-text-secondary)',
+                marginTop: '16px'
+              }}>
+                <CheckCircle2 size={16} color="var(--color-success)" style={{ flexShrink: 0 }} />
+                <span>
+                  Puedes apagar la pantalla o cambiar de aplicación; el audio continuará sonando en segundo plano en tus auriculares.
+                </span>
+              </div>
+
+              {/* Unstable Wi-Fi Suggestion */}
+              {(networkQuality.status === 'poor' || droppedFrames > 5) && audioMode === 'audio' && (
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '10px',
+                  background: 'rgba(234, 179, 8, 0.1)',
+                  border: '1px solid rgba(234, 179, 8, 0.3)',
+                  borderRadius: '8px',
+                  padding: '10px 14px',
+                  fontSize: '12px',
+                  color: '#facc15',
+                  marginTop: '12px'
+                }}>
+                  <span>⚠️ Wi-Fi congestionada detectada. ¿Deseas activar Solo Subtítulos?</span>
+                  <button 
+                    className="btn btn-secondary" 
+                    style={{ padding: '4px 10px', fontSize: '11px', whiteSpace: 'nowrap' }}
+                    onClick={() => handleModeChange('subtitles')}
+                  >
+                    Activar Subtítulos
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="transcript-card">
@@ -697,7 +870,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
               <div className="status-row">
                 <span className="status-label">Servidor</span>
                 <span className="status-val" style={{ color: 'var(--color-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <CheckCircle2 size={14} /> Cloudflare Edge
+                  <CheckCircle2 size={14} /> Cloudflare Edge (Hibernation)
                 </span>
               </div>
 
@@ -710,7 +883,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                   gap: '4px',
                   fontWeight: 600 
                 }}>
-                  <Cpu size={14} /> Binario VXL1 (24 kHz)
+                  <Cpu size={14} /> {audioMode === 'subtitles' ? 'Solo Subtítulos (0 kbps)' : 'Binario VXL1 (16 kHz HD Voice)'}
                 </span>
               </div>
 
@@ -750,7 +923,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
               <div className="status-row">
                 <span className="status-label">Otros oyentes</span>
                 <span className="status-val" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <Users size={16} /> {listenersCount > 0 ? listenersCount - 1 : 0}
+                  <Users size={16} /> {listenersCount > 0 ? listenersCount - 1 : 0} {listenersCount > 1 ? `(${audioListeners} audio · ${textOnlyListeners} texto)` : ''}
                 </span>
               </div>
 
@@ -767,15 +940,25 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                 <button
                   className={`btn ${isListening ? 'btn-secondary' : 'btn-primary'}`}
                   style={{ flex: 1 }}
-                  onClick={() => setIsListening(!isListening)}
+                  onClick={() => {
+                    if (audioMode === 'subtitles') {
+                      handleModeChange('audio');
+                    } else {
+                      setIsListening(!isListening);
+                    }
+                  }}
                 >
-                  {isListening ? (
+                  {audioMode === 'subtitles' ? (
                     <>
-                      <Square size={16} /> Pausar
+                      <Headphones size={18} /> Activar Audio
+                    </>
+                  ) : isListening ? (
+                    <>
+                      <Square size={18} /> Pausar Audio
                     </>
                   ) : (
                     <>
-                      <Play size={16} /> Escuchar
+                      <Play size={18} /> Escuchar Audio
                     </>
                   )}
                 </button>

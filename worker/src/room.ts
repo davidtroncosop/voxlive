@@ -13,13 +13,14 @@ export interface Env {
   OPENAI_API_KEY?: string;
 }
 
-interface ConnectionInfo {
-  socket: WebSocket;
+export interface ConnectionInfo {
+  connId: string;
   role: 'guide' | 'visitor';
   lang: string;
   clientId: string;
-  audioFormat: 'binary' | 'json';
+  audioFormat: 'binary' | 'binary24' | 'none' | 'json';
   failedSends: number;
+  joinedAt: number;
 }
 
 interface OpenAIConnection {
@@ -55,7 +56,6 @@ const GUIDE_DISCONNECT_GRACE_MS = 12_000; // 12 seconds grace period before tear
 export class TourRoom {
   state: DurableObjectState;
   env: Env;
-  connections: Map<string, ConnectionInfo>;
   guideSocket: WebSocket | null = null;
   guideLang: string = 'en';
   guideHostSecret: string | null = null;
@@ -69,7 +69,6 @@ export class TourRoom {
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
-    this.connections = new Map();
     this.openAIConnections = new Map();
     this.openAIConnectionPromises = new Map();
     this.openAIFailedMap = new Set();
@@ -91,7 +90,11 @@ export class TourRoom {
     // Extract connection params
     const role = (url.searchParams.get('role') as 'guide' | 'visitor') || 'visitor';
     const lang = url.searchParams.get('lang') || (role === 'guide' ? 'en' : 'es');
-    const audioFormat = url.searchParams.get('audio') === 'json' ? 'json' : 'binary';
+    const rawAudio = url.searchParams.get('audio');
+    const audioFormat: ConnectionInfo['audioFormat'] = 
+      rawAudio === 'none' ? 'none' :
+      rawAudio === 'binary24' ? 'binary24' :
+      rawAudio === 'json' ? 'json' : 'binary';
     const hostToken = url.searchParams.get('hostToken') || '';
     const connId = Math.random().toString(36).substring(2, 10);
     const clientId = url.searchParams.get('client')
@@ -107,36 +110,26 @@ export class TourRoom {
   }
 
   async handleConnection(
-    socket: WebSocket,
+    server: WebSocket,
     connId: string,
     role: 'guide' | 'visitor',
     lang: string,
     clientId: string,
-    audioFormat: 'binary' | 'json',
+    audioFormat: ConnectionInfo['audioFormat'],
     hostToken?: string,
   ) {
-    socket.accept();
     console.log(`[DO Room] New connection: id=${connId}, role=${role}, lang=${lang}, audio=${audioFormat}`);
 
-    if (role === 'visitor') {
-      // Reconnect replaces the stale socket for visitor
-      for (const [existingId, existing] of this.connections) {
-        if (existing.role === 'visitor' && existing.clientId === clientId) {
-          try {
-            existing.socket.close(4001, 'Replaced by reconnect');
-          } catch {}
-          this.connections.delete(existingId);
-        }
-      }
-    } else if (role === 'guide') {
+    if (role === 'guide') {
       // Guide connection handling with security token & grace period recovery
       if (this.guideHostSecret && hostToken && hostToken !== this.guideHostSecret) {
+        server.accept();
         try {
-          socket.send(JSON.stringify({
+          server.send(JSON.stringify({
             type: 'error',
             message: 'La sala ya tiene un guía activo con credenciales diferentes.',
           }));
-          socket.close(4003, 'Unauthorized guide host token');
+          server.close(4003, 'Unauthorized guide host token');
         } catch {}
         return;
       }
@@ -145,157 +138,228 @@ export class TourRoom {
         this.guideHostSecret = hostToken || Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
       }
 
-      // If there was a grace period timer running for a dropped guide, cancel it!
+      // If there was a grace period timer running for a dropped guide, cancel it
       if (this.guideDisconnectTimer) {
         console.log('[DO Room] Guide reconnected within grace period. Restoring session seamlessly.');
         clearTimeout(this.guideDisconnectTimer);
         this.guideDisconnectTimer = null;
       }
 
-      if (this.guideSocket && this.guideSocket !== socket) {
+      if (this.guideSocket && this.guideSocket !== server) {
         try {
           this.guideSocket.close(4002, 'Replaced by guide reconnect');
         } catch {}
       }
 
-      this.guideSocket = socket;
+      this.guideSocket = server;
       this.guideLang = lang;
-
-      this.sendProviderStatus(socket);
+    } else {
+      // Visitor reconnect replaces any stale socket matching this clientId
+      const existingSockets = this.state.getWebSockets(`client:${clientId}`);
+      for (const oldSocket of existingSockets) {
+        if (oldSocket !== server) {
+          try {
+            oldSocket.close(4001, 'Replaced by reconnect');
+          } catch {}
+        }
+      }
     }
 
-    // Register connection
-    const connInfo: ConnectionInfo = { socket, role, lang, clientId, audioFormat, failedSends: 0 };
-    this.connections.set(connId, connInfo);
+    // Assign tags for high-speed native Workerd filtering
+    const tags = [
+      `role:${role}`,
+      `lang:${lang}`,
+      `audio:${audioFormat}`,
+      `client:${clientId}`,
+    ];
+
+    // Accept WebSocket into Durable Object Hibernation runtime
+    this.state.acceptWebSocket(server, tags);
+
+    // Attach metadata directly to the WebSocket
+    const connInfo: ConnectionInfo = {
+      connId,
+      role,
+      lang,
+      clientId,
+      audioFormat,
+      failedSends: 0,
+      joinedAt: Date.now(),
+    };
+    server.serializeAttachment(connInfo);
+
+    if (role === 'guide') {
+      this.sendProviderStatus(server);
+    }
 
     this.broadcastStatus();
+  }
 
-    socket.addEventListener('message', async (msg) => {
-      try {
-        // 1. Binary frames (High performance audio uplink)
-        if (msg.data instanceof ArrayBuffer) {
-          if (role === 'guide') {
-            try {
-              const frame = decodeAudioFrame(msg.data);
-              await this.handleGuideAudioBytes(frame.pcmBytes, frame.sampleRate);
-            } catch (err) {
-              console.error('[DO Room] Error decoding binary audio frame:', err);
-            }
+  // Cloudflare WebSocket Hibernation API message handler
+  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    const connInfo = ws.deserializeAttachment() as ConnectionInfo | null;
+    if (!connInfo) return;
+
+    try {
+      // 1. Binary frames (High performance audio uplink from Guide)
+      if (message instanceof ArrayBuffer) {
+        if (connInfo.role === 'guide') {
+          try {
+            const frame = decodeAudioFrame(message);
+            await this.handleGuideAudioBytes(frame.pcmBytes, frame.sampleRate);
+          } catch (err) {
+            console.error('[DO Room] Error decoding binary audio frame:', err);
           }
+        }
+        return;
+      }
+
+      // 2. JSON control messages
+      if (typeof message === 'string') {
+        const data = JSON.parse(message);
+
+        // Ping / Pong for RTT measurement
+        if (data.type === 'ping') {
+          ws.send(JSON.stringify({
+            type: 'pong',
+            clientTimestamp: data.timestamp || Date.now(),
+            serverTimestamp: Date.now(),
+          }));
           return;
         }
 
-        // 2. JSON control messages
-        if (typeof msg.data === 'string') {
-          const data = JSON.parse(msg.data);
-          
-          if (data.type === 'config') {
-            if (role === 'guide') {
-              const nextGuideLang = typeof data.nativeLanguage === 'string' ? data.nativeLanguage : this.guideLang;
-
-              if (nextGuideLang !== this.guideLang) {
-                this.closeAllOpenAI();
-              }
-              this.guideLang = nextGuideLang;
-
-              if (Array.isArray(data.customGlossary)) {
-                this.customGlossary = data.customGlossary.map((term: any) => {
-                  if (typeof term === 'string') {
-                    return { canonical: term, aliases: [term] };
-                  }
-                  if (term && typeof term.canonical === 'string') {
-                    return {
-                      canonical: term.canonical,
-                      aliases: Array.isArray(term.aliases) ? term.aliases : [term.canonical]
-                    };
-                  }
-                  return null;
-                }).filter(Boolean) as GlossaryTerm[];
-              }
-
-              this.sendProviderStatus(socket);
-              this.broadcastStatus();
-            }
-          } 
-          
-          else if (data.type === 'audio_chunk') {
-            if (role === 'guide') {
-              await this.handleGuideAudio(data.data, data.sampleRate);
-            }
-          } 
-          
-          else if (data.type === 'guide_text') {
-            if (role === 'guide') {
-              await this.handleGuideText(data.text, data.isFinal);
-            }
-          }
-
-          else if (data.type === 'ping') {
-            socket.send(JSON.stringify({
-              type: 'pong',
-              clientTimestamp: data.timestamp || Date.now(),
-              serverTimestamp: Date.now(),
-            }));
-          }
-        }
-      } catch (err) {
-        console.error('[DO Room] Error processing websocket message:', err);
-      }
-    });
-
-    socket.addEventListener('close', () => {
-      console.log(`[DO Room] Connection closed: id=${connId}, role=${role}`);
-      this.connections.delete(connId);
-
-      if (role === 'guide' && this.guideSocket === socket) {
-        this.guideSocket = null;
-        console.log(`[DO Room] Guide disconnected. Starting ${GUIDE_DISCONNECT_GRACE_MS}ms grace period.`);
-        
-        if (this.guideDisconnectTimer) clearTimeout(this.guideDisconnectTimer);
-        this.guideDisconnectTimer = setTimeout(() => {
-          console.log('[DO Room] Grace period expired without guide reconnect. Tearing down OpenAI sessions.');
-          this.guideDisconnectTimer = null;
-          this.closeAllOpenAI();
+        // Dynamic audio mode switcher (e.g. visitor switches between audio and subtitles-only)
+        if (data.type === 'set_audio_mode') {
+          const newAudio: ConnectionInfo['audioFormat'] = 
+            data.audio === 'none' ? 'none' :
+            data.audio === 'binary24' ? 'binary24' :
+            data.audio === 'json' ? 'json' : 'binary';
+          connInfo.audioFormat = newAudio;
+          ws.serializeAttachment(connInfo);
           this.broadcastStatus();
-        }, GUIDE_DISCONNECT_GRACE_MS);
-      }
+          return;
+        }
 
-      this.broadcastStatus();
-    });
+        // Guide room configuration
+        if (data.type === 'config' && connInfo.role === 'guide') {
+          const nextGuideLang = typeof data.nativeLanguage === 'string' ? data.nativeLanguage : this.guideLang;
 
-    socket.addEventListener('error', (e) => {
-      console.error(`[DO Room] WebSocket connection ${connId} error:`, e);
-      this.connections.delete(connId);
-      if (role === 'guide' && this.guideSocket === socket) {
-        this.guideSocket = null;
+          if (nextGuideLang !== this.guideLang) {
+            this.closeAllOpenAI();
+          }
+          this.guideLang = nextGuideLang;
+
+          if (Array.isArray(data.customGlossary)) {
+            this.customGlossary = data.customGlossary.map((term: any) => {
+              if (typeof term === 'string') {
+                return { canonical: term, aliases: [term] };
+              }
+              if (term && typeof term.canonical === 'string') {
+                return {
+                  canonical: term.canonical,
+                  aliases: Array.isArray(term.aliases) ? term.aliases : [term.canonical]
+                };
+              }
+              return null;
+            }).filter(Boolean) as GlossaryTerm[];
+          }
+
+          this.sendProviderStatus(ws);
+          this.broadcastStatus();
+          return;
+        }
+
+        // Guide audio chunk fallback (Base64)
+        if (data.type === 'audio_chunk' && connInfo.role === 'guide') {
+          await this.handleGuideAudio(data.data, data.sampleRate);
+          return;
+        }
+
+        // Guide speech text
+        if (data.type === 'guide_text' && connInfo.role === 'guide') {
+          await this.handleGuideText(data.text, data.isFinal);
+          return;
+        }
       }
-      this.broadcastStatus();
-    });
+    } catch (err) {
+      console.error('[DO Room] Error processing websocket message:', err);
+    }
   }
 
-  // Broadcast the room status (active listener count, guide language, provider)
+  // Cloudflare WebSocket Hibernation API close handler
+  async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean): Promise<void> {
+    const connInfo = ws.deserializeAttachment() as ConnectionInfo | null;
+    console.log(`[DO Room] WebSocket closed: role=${connInfo?.role}, clientId=${connInfo?.clientId}, code=${code}, clean=${wasClean}`);
+
+    if (connInfo?.role === 'guide' || ws === this.guideSocket) {
+      this.guideSocket = null;
+      console.log(`[DO Room] Guide disconnected. Starting ${GUIDE_DISCONNECT_GRACE_MS}ms grace period.`);
+      
+      if (this.guideDisconnectTimer) clearTimeout(this.guideDisconnectTimer);
+      this.guideDisconnectTimer = setTimeout(() => {
+        console.log('[DO Room] Grace period expired without guide reconnect. Tearing down OpenAI sessions.');
+        this.guideDisconnectTimer = null;
+        this.closeAllOpenAI();
+        this.broadcastStatus();
+      }, GUIDE_DISCONNECT_GRACE_MS);
+    }
+
+    this.broadcastStatus();
+  }
+
+  // Cloudflare WebSocket Hibernation API error handler
+  async webSocketError(ws: WebSocket, error: unknown): Promise<void> {
+    console.error('[DO Room] WebSocket error:', error);
+    const connInfo = ws.deserializeAttachment() as ConnectionInfo | null;
+    if (connInfo?.role === 'guide' || ws === this.guideSocket) {
+      this.guideSocket = null;
+    }
+    this.broadcastStatus();
+  }
+
+  // Broadcast the room status (listeners count, breakdown, guide language, provider)
   broadcastStatus() {
-    let listenersCount = 0;
-    for (const conn of this.connections.values()) {
-      if (conn.role === 'visitor') {
-        listenersCount++;
+    const visitors = this.state.getWebSockets('role:visitor');
+    const totalVisitors = visitors.length;
+    let audioListeners = 0;
+    let textOnlyListeners = 0;
+    const langCounts: Record<string, number> = {};
+
+    for (const ws of visitors) {
+      const info = ws.deserializeAttachment() as ConnectionInfo | null;
+      if (info) {
+        if (info.audioFormat === 'none') {
+          textOnlyListeners++;
+        } else {
+          audioListeners++;
+        }
+        langCounts[info.lang] = (langCounts[info.lang] || 0) + 1;
       }
     }
 
+    const isGuideConnected = Boolean(
+      this.guideSocket && this.guideSocket.readyState === WebSocket.OPEN
+    );
+
     const statusMsg = JSON.stringify({
       type: 'status_update',
-      listenersCount,
+      listenersCount: totalVisitors,
+      audioListeners,
+      textOnlyListeners,
+      langCounts,
       guideLanguage: this.guideLang,
-      hasActiveGuide: Boolean(this.guideSocket),
+      hasActiveGuide: isGuideConnected,
       translationProvider: TRANSLATION_PROVIDER.id,
       timestamp: Date.now(),
     });
 
-    for (const conn of this.connections.values()) {
-      try {
-        conn.socket.send(statusMsg);
-      } catch {
-        // Socket write failure
+    for (const ws of this.state.getWebSockets()) {
+      if (ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(statusMsg);
+        } catch {
+          // Socket write failure
+        }
       }
     }
   }
@@ -529,7 +593,7 @@ export class TourRoom {
   }
 
   notifyGuideOfLiveFailure(reason: string) {
-    if (!this.guideSocket) return;
+    if (!this.guideSocket || this.guideSocket.readyState !== WebSocket.OPEN) return;
     const detail = reason.length > 180 ? `${reason.slice(0, 177)}...` : reason;
     try {
       this.guideSocket.send(JSON.stringify({
@@ -546,10 +610,13 @@ export class TourRoom {
       ? Math.round(reportedSampleRate!)
       : 16000;
 
+    // Identify target languages with active listeners
+    const visitors = this.state.getWebSockets('role:visitor');
     const targetLanguages = new Set<string>();
-    for (const conn of this.connections.values()) {
-      if (conn.role === 'visitor') {
-        targetLanguages.add(conn.lang);
+    for (const ws of visitors) {
+      const info = ws.deserializeAttachment() as ConnectionInfo | null;
+      if (info?.lang) {
+        targetLanguages.add(info.lang);
       }
     }
 
@@ -585,10 +652,12 @@ export class TourRoom {
       ? Math.round(reportedSampleRate!)
       : 16000;
 
+    const visitors = this.state.getWebSockets('role:visitor');
     const targetLanguages = new Set<string>();
-    for (const conn of this.connections.values()) {
-      if (conn.role === 'visitor') {
-        targetLanguages.add(conn.lang);
+    for (const ws of visitors) {
+      const info = ws.deserializeAttachment() as ConnectionInfo | null;
+      if (info?.lang) {
+        targetLanguages.add(info.lang);
       }
     }
 
@@ -618,12 +687,12 @@ export class TourRoom {
     }
   }
 
-  // Use browser STT only for the guide transcript and same-language listeners.
+  // Use browser STT only for the guide transcript and same-language listeners
   async handleGuideText(text: string, isFinal: boolean) {
     if (!isFinal) return;
     const normalizedText = this.normalizeProtectedTerms(text);
 
-    if (this.guideSocket) {
+    if (this.guideSocket && this.guideSocket.readyState === WebSocket.OPEN) {
       try {
         this.guideSocket.send(JSON.stringify({
           type: 'transcript',
@@ -632,18 +701,24 @@ export class TourRoom {
       } catch {}
     }
 
-    for (const conn of this.connections.values()) {
-      if (conn.role !== 'visitor' || conn.lang !== this.guideLang) continue;
-      this.broadcastToLanguage(this.guideLang, JSON.stringify({
-        type: 'transcript',
-        id: Math.random().toString(),
-        originalText: normalizedText,
-        translatedText: normalizedText,
-        languageCode: this.guideLang,
-        isFinal: true,
-        hasAudio: false,
-      }));
-      break;
+    const sameLanguageSockets = this.state.getWebSockets(`lang:${this.guideLang}`);
+    const msg = JSON.stringify({
+      type: 'transcript',
+      id: Math.random().toString(),
+      originalText: normalizedText,
+      translatedText: normalizedText,
+      languageCode: this.guideLang,
+      isFinal: true,
+      hasAudio: false,
+    });
+
+    for (const ws of sameLanguageSockets) {
+      const info = ws.deserializeAttachment() as ConnectionInfo | null;
+      if (info?.role === 'visitor' && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(msg);
+        } catch {}
+      }
     }
   }
 
@@ -668,10 +743,12 @@ export class TourRoom {
 
   // Broadcast data ONLY to visitors listening in a specific language
   broadcastToLanguage(lang: string, message: string) {
-    for (const conn of this.connections.values()) {
-      if (conn.role === 'visitor' && conn.lang === lang) {
+    const targetSockets = this.state.getWebSockets(`lang:${lang}`);
+    for (const ws of targetSockets) {
+      const info = ws.deserializeAttachment() as ConnectionInfo | null;
+      if (info?.role === 'visitor' && ws.readyState === WebSocket.OPEN) {
         try {
-          conn.socket.send(message);
+          ws.send(message);
         } catch {
           // Socket write failure
         }
@@ -679,22 +756,37 @@ export class TourRoom {
     }
   }
 
-  // High-performance binary audio broadcasting
+  // High-performance binary audio broadcasting with 16 kHz Wideband optimization & Subtitles-Only zero-audio mode
   broadcastAudioToLanguage(lang: string, base64Data: string, sampleRate: number) {
     const sequence = ((this.audioSequences.get(lang) || 0) + 1) >>> 0;
     this.audioSequences.set(lang, sequence);
 
+    const targetSockets = this.state.getWebSockets(`lang:${lang}`);
+    if (targetSockets.length === 0) return;
+
     const pcmBytes = base64ToBytes(base64Data);
-    const binaryFrame = createAudioFrameFromBytes(pcmBytes, sampleRate, sequence, Date.now());
+
+    let frame16k: ArrayBuffer | null = null;
+    let frame24k: ArrayBuffer | null = null;
     let legacyMessage: string | null = null;
 
-    for (const [connId, conn] of this.connections) {
-      if (conn.role !== 'visitor' || conn.lang !== lang || conn.socket.readyState !== 1) continue;
+    for (const ws of targetSockets) {
+      if (ws.readyState !== WebSocket.OPEN) continue;
+      const info = ws.deserializeAttachment() as ConnectionInfo | null;
+      if (!info || info.role !== 'visitor') continue;
+
+      // Zero-audio mode: visitor chose "Solo subtítulos", saving 100% of audio bandwidth
+      if (info.audioFormat === 'none') continue;
 
       try {
-        if (conn.audioFormat === 'binary') {
-          conn.socket.send(binaryFrame);
-        } else {
+        if (info.audioFormat === 'binary24') {
+          // Explicit 24 kHz audio request
+          if (!frame24k) {
+            frame24k = createAudioFrameFromBytes(pcmBytes, sampleRate, sequence, Date.now());
+          }
+          ws.send(frame24k);
+        } else if (info.audioFormat === 'json') {
+          // Legacy JSON fallback
           legacyMessage ||= JSON.stringify({
             type: 'audio_chunk',
             data: base64Data,
@@ -702,16 +794,26 @@ export class TourRoom {
             sequence,
             sentAt: Date.now(),
           });
-          conn.socket.send(legacyMessage);
+          ws.send(legacyMessage);
+        } else {
+          // Default: 'binary' optimized at 16 kHz HD Voice (33.3% bandwidth saving across all 450 attendees)
+          if (!frame16k) {
+            const pcm16kBytes = sampleRate === 16000 
+              ? pcmBytes 
+              : resamplePcm16Bytes(pcmBytes, sampleRate, 16000);
+            frame16k = createAudioFrameFromBytes(pcm16kBytes, 16000, sequence, Date.now());
+          }
+          ws.send(frame16k);
         }
-        conn.failedSends = 0;
+        info.failedSends = 0;
       } catch {
-        conn.failedSends++;
-        if (conn.failedSends >= 3) {
+        info.failedSends = (info.failedSends || 0) + 1;
+        if (info.failedSends >= 3) {
           try {
-            conn.socket.close(1011, 'Audio delivery failed');
+            ws.close(1011, 'Audio delivery failed');
           } catch {}
-          this.connections.delete(connId);
+        } else {
+          ws.serializeAttachment(info);
         }
       }
     }

@@ -31,6 +31,20 @@ export interface CustomGlossaryTerm {
   aliases: string[];
 }
 
+export type AudioMode = 'audio' | 'subtitles';
+
+export interface RoomStatusUpdate {
+  type: 'status_update';
+  listenersCount: number;
+  audioListeners?: number;
+  textOnlyListeners?: number;
+  langCounts?: Record<string, number>;
+  guideLanguage?: string;
+  hasActiveGuide?: boolean;
+  translationProvider?: string;
+  timestamp?: number;
+}
+
 export interface NetworkQuality {
   rttMs: number | null;
   status: 'excellent' | 'good' | 'fair' | 'poor' | 'unknown';
