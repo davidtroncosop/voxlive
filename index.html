@@ -1,18 +1,116 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="es">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <meta name="theme-color" content="#0b0c10" />
-    <meta name="description" content="Voxlive — Traducción simultánea de voz en tiempo real para eventos, congresos y presentaciones. Sin apps que instalar." />
-    <title>Voxlive — Traducción de Voz en Tiempo Real</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Voxlive — Traducción de Voz en Tiempo Real</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page">
+    <div class="bg">
+      <video class="bg-video" autoplay muted loop playsinline>
+        <source src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260808_075824_7c8a2ef3-826c-43ca-81a1-162429faa306.mp4" type="video/mp4">
+      </video>
+    </div>
+
+    <header class="nav">
+      <nav class="nav__links" aria-label="Principal">
+        <a href="#" class="nav__link" style="--d: 0.02s">Plataforma</a>
+        <a href="#" class="nav__link" style="--d: 0.08s">Soluciones</a>
+        <a href="#" class="nav__link" style="--d: 0.14s">Empresa</a>
+        <a href="#" class="nav__link" style="--d: 0.20s">Precios</a>
+      </nav>
+
+      <a class="logo" href="#" aria-label="Voxlive">
+        <svg class="logo__svg" viewBox="0 0 42 34" fill="currentColor">
+          <polygon points="12,0 30,0 33.2,3.2 15.2,3.2" />
+          <polygon points="14.6,5.6 32.6,5.6 35.8,8.8 17.8,8.8" />
+          <polygon points="17.2,11.2 35.2,11.2 38.4,14.4 20.4,14.4" />
+          <polygon points="3.2,16.8 21.2,16.8 24.4,20 6.4,20" />
+          <polygon points="5.8,22.4 23.8,22.4 27,25.6 9,25.6" />
+          <polygon points="8.4,28 26.4,28 29.6,31.2 11.6,31.2" />
+        </svg>
+      </a>
+
+      <a href="#" class="btn btn--nav" style="--d: 0.16s">
+        <span class="btn__label">Reservar Demo</span>
+        <span class="btn__icon">
+          <svg class="arrow-svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 10h10.2M10.4 5.6 15.2 10l-4.8 4.4" />
+          </svg>
+        </span>
+      </a>
+
+      <button class="nav__burger" type="button" aria-label="Abrir menú" aria-expanded="false" aria-controls="mobile-menu" style="--d: 0.16s">
+        <span class="burger__bar"></span>
+        <span class="burger__bar"></span>
+        <span class="burger__bar"></span>
+      </button>
+    </header>
+
+    <div id="mobile-menu" class="mobile-menu" hidden>
+      <div class="mobile-menu__links">
+        <a href="#" class="mobile-menu__link">Plataforma</a>
+        <a href="#" class="mobile-menu__link">Soluciones</a>
+        <a href="#" class="mobile-menu__link">Empresa</a>
+        <a href="#" class="mobile-menu__link">Precios</a>
+      </div>
+      <a href="#" class="btn btn--nav">
+        <span class="btn__label">Reservar Demo</span>
+        <span class="btn__icon">
+          <svg class="arrow-svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 10h10.2M10.4 5.6 15.2 10l-4.8 4.4" />
+          </svg>
+        </span>
+      </a>
+    </div>
+
+    <main class="hero">
+      <div class="badge wipe" style="--d: 0.18s">
+        <span class="badge__indicator"></span>
+        <span class="badge__text">Traducción de Voz en Tiempo Real</span>
+      </div>
+
+      <h1 class="headline">
+        <span class="headline__mask">
+          <span class="headline__rise" style="--d: 0.26s">Cada idioma se convierte</span>
+        </span>
+        <span class="headline__mask">
+          <span class="headline__rise headline__line" style="--d: 0.4s">
+            <span class="headline__muted">en una conversación</span>
+            <span class="headline__accent" data-text="sin barreras.">sin barreras.</span>
+          </span>
+        </span>
+      </h1>
+
+      <div class="hero__actions">
+        <a href="#" class="btn btn--light wipe" style="--d: 0.56s">
+          <span class="btn__label">Reservar Demo</span>
+          <span class="btn__icon">
+            <svg class="arrow-svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 10h10.2M10.4 5.6 15.2 10l-4.8 4.4" />
+            </svg>
+          </span>
+        </a>
+        <a href="#" class="btn btn--ghost wipe" style="--d: 0.66s">
+          <span class="btn__label">Ver Voxlive en Acción</span>
+        </a>
+      </div>
+    </main>
+
+    <p class="lede">
+      <span class="lede__rise" style="--d: 0.78s">
+        Voxlive traduce voz a voz en tiempo real durante eventos, congresos y presentaciones, sin apps que instalar ni equipos adicionales, para que cada persona en la sala escuche en su propio idioma al instante.
+      </span>
+    </p>
+  </div>
+
+  <script src="main.js"></script>
+</body>
 </html>
