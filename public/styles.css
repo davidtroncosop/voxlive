@@ -49,8 +49,7 @@
 
 html,
 body {
-  height: 100%;
-  overflow: hidden;
+  min-height: 100%;
 }
 
 body {
@@ -59,11 +58,12 @@ body {
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
 }
 
 #root {
   width: 100%;
-  height: 100%;
+  min-height: 100%;
   display: flex;
   flex-direction: column;
 }
@@ -673,15 +673,24 @@ button {
   z-index: 1;
 }
 
+.session-container .bg {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 0 !important;
+  pointer-events: none !important;
+}
+
 .session-nav {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 28px;
+  margin-bottom: 32px;
   position: relative;
   z-index: 2;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
-  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+  padding-bottom: 20px;
 }
 
 .session-nav .logo {
@@ -723,24 +732,61 @@ button {
   flex-direction: column;
 }
 
+/* ==========================================================================
+   CONSISTENT 3-TIER GLASS SYSTEM FOR SESSIONS
+   ========================================================================== */
+
+/* Tier 1: Primary Panels & Cards (Equal depth, 24px blur, translucent) */
 .session-container .glass-card,
 .session-container .status-card,
 .session-container .transcript-card,
-.session-container .action-box,
+.session-container .setup-card-glass {
+  background: rgba(8, 12, 22, 0.65) !important;
+  backdrop-filter: blur(24px) !important;
+  -webkit-backdrop-filter: blur(24px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45) !important;
+  border-radius: 0 !important;
+}
+
+/* Tier 2: Interior Sub-boxes & Action Containers (16px blur, darker for contrast) */
+.session-container .action-box {
+  background: rgba(4, 7, 14, 0.58) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 0 !important;
+}
+
+.session-container .transcript-header {
+  background: rgba(0, 0, 0, 0.35) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12) !important;
+}
+
+.session-container .transcript-bubble {
+  background: rgba(4, 7, 14, 0.65) !important;
+  backdrop-filter: blur(14px) !important;
+  -webkit-backdrop-filter: blur(14px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 0 !important;
+}
+
+/* Tier 3: Badges, Pills & Indicators */
+.session-container .badge-live {
+  background: rgba(239, 68, 68, 0.2) !important;
+  border: 1px solid rgba(239, 68, 68, 0.5) !important;
+  color: #ffffff !important;
+  border-radius: 0 !important;
+}
+
 .session-container .room-code-tag,
 .session-container .glass-input,
 .session-container .glass-select,
 .session-container .btn,
 .session-container .badge {
   border-radius: 0 !important;
-}
-
-.session-container .glass-card {
-  background: rgba(8, 12, 22, 0.68);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
 }
 
 .session-container .btn-primary {
@@ -1350,31 +1396,33 @@ button {
 }
 
 .panel-title {
-  font-family: var(--font-heading);
-  font-size: 28px;
+  font-family: var(--font);
+  font-size: 22px;
   font-weight: 700;
+  letter-spacing: -0.02em;
   display: flex;
   align-items: center;
   gap: 12px;
+  color: #ffffff;
 }
 
-.room-code-tag {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--border-light);
-  padding: 8px 16px;
-  border-radius: var(--radius-sm);
-  font-family: var(--font-heading);
-  font-size: 18px;
-  font-weight: 600;
+/* Clean flat room code (does not compete with action button) */
+.room-code-plain {
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.65);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  letter-spacing: -0.01em;
 }
 
-.room-code-value {
-  color: var(--color-secondary);
+.room-code-plain .room-code-value {
+  color: var(--blue-vibrant);
+  font-family: "SF Mono", "Fira Code", monospace;
   font-weight: 700;
-  letter-spacing: 1px;
+  font-size: 14px;
+  letter-spacing: 1.5px;
 }
 
 .ctrl-panel {
@@ -1383,51 +1431,60 @@ button {
   gap: 24px;
 }
 
+/* Tier 2: Darker glass interior box for microphone to highlight message */
 .action-box {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 48px 24px;
-  border-radius: var(--radius-md);
-  background: var(--bg-card);
-  border: 1px dashed var(--border-light);
+  padding: 40px 24px;
+  background: rgba(4, 7, 14, 0.58);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0;
   text-align: center;
-  gap: 20px;
+  gap: 16px;
 }
 
+/* Mic button with brand-blue glow (inactive) and crimson red (active) */
 .action-mic-btn {
-  width: 100px;
-  height: 100px;
-  border-radius: var(--radius-full);
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  border: none;
-  transition: var(--transition-bounce);
-  color: white;
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s ease;
+  color: #ffffff;
 }
 
 .action-mic-btn.inactive {
-  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-dark));
-  box-shadow: 0 4px 20px rgba(124, 58, 237, 0.4);
+  background: linear-gradient(135deg, #006cd2, #0053a3);
+  box-shadow: 0 4px 24px rgba(0, 108, 210, 0.45);
+}
+
+.action-mic-btn.inactive:hover {
+  transform: scale(1.05);
+  box-shadow: 0 6px 32px rgba(0, 108, 210, 0.7);
+  border-color: var(--blue-vibrant);
 }
 
 .action-mic-btn.active {
-  background: linear-gradient(135deg, var(--color-danger), #dc2626);
-  box-shadow: 0 0 30px rgba(239, 68, 68, 0.6);
+  background: linear-gradient(135deg, #ef4444, #b91c1c);
+  border-color: rgba(239, 68, 68, 0.6);
+  box-shadow: 0 0 35px rgba(239, 68, 68, 0.65);
   animation: pulse-glow 2s infinite ease-in-out;
 }
 
-.action-mic-btn:hover {
-  transform: scale(1.08);
-}
-
 .action-mic-label {
+  font-family: var(--font);
   font-size: 18px;
   font-weight: 600;
-  color: var(--color-text-primary);
+  color: #ffffff;
+  letter-spacing: -0.015em;
 }
 
 /* Transcripts / Live Board */
@@ -1435,23 +1492,29 @@ button {
   display: flex;
   flex-direction: column;
   height: 480px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
+  background: rgba(8, 12, 22, 0.65);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0;
   overflow: hidden;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
 }
 
 .transcript-header {
   padding: 16px 24px;
-  border-bottom: 1px solid var(--border-light);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: rgba(0, 0, 0, 0.15);
+  background: rgba(0, 0, 0, 0.35);
 }
 
 .transcript-header-title {
+  font-family: var(--font);
+  font-size: 15px;
   font-weight: 600;
+  color: #ffffff;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1463,16 +1526,18 @@ button {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
 .transcript-bubble {
-  max-width: 85%;
+  max-width: 88%;
   align-self: flex-start;
-  background: var(--bg-card);
-  border: 1px solid var(--border-light);
-  border-radius: 4px var(--radius-md) var(--radius-md) var(--radius-md);
-  padding: 16px;
+  background: rgba(4, 7, 14, 0.65);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0;
+  padding: 14px 18px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1481,11 +1546,11 @@ button {
 }
 
 .transcript-bubble.guide-bubble {
-  border-left: 3px solid var(--color-primary);
+  border-left: 3px solid var(--blue);
 }
 
 .transcript-bubble.visitor-bubble {
-  border-left: 3px solid var(--color-secondary);
+  border-left: 3px solid var(--blue-vibrant);
 }
 
 .transcript-bubble.pending {
@@ -1497,30 +1562,30 @@ button {
   justify-content: space-between;
   align-items: center;
   font-size: 12px;
-  color: var(--color-text-muted);
+  color: rgba(255, 255, 255, 0.6);
 }
 
 .bubble-lang {
   display: flex;
   align-items: center;
   gap: 4px;
-  color: var(--color-secondary);
+  color: var(--blue-vibrant);
   font-weight: 600;
 }
 
 .bubble-text-original {
   font-size: 14px;
-  color: var(--color-text-secondary);
+  color: rgba(255, 255, 255, 0.75);
   font-style: italic;
-  border-bottom: 1px dashed rgba(255, 255, 255, 0.05);
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.08);
   padding-bottom: 6px;
 }
 
 .bubble-text-translated {
   font-size: 16px;
-  color: var(--color-text-primary);
+  color: #ffffff;
   font-weight: 500;
-  line-height: 1.4;
+  line-height: 1.45;
 }
 
 .empty-state {
@@ -1529,45 +1594,109 @@ button {
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: var(--color-text-muted);
+  color: rgba(255, 255, 255, 0.55);
   gap: 12px;
   text-align: center;
+  font-size: 14px;
 }
 
-@keyframes slide-up {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+/* LIVE badge with pulsing dot */
+.badge-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #ffffff;
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  border-radius: 0;
+}
+
+.badge-live .pulse-dot {
+  width: 7px;
+  height: 7px;
+  background: #ef4444;
+  box-shadow: 0 0 8px #ef4444;
+  border-radius: 0;
+  animation: pulse-dot-anim 1.5s infinite ease-in-out;
+}
+
+@keyframes pulse-dot-anim {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.85); }
 }
 
 /* Sidebar Info Cards */
 .sidebar-panel {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 20px;
 }
 
 .status-card {
   padding: 24px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
+  background: rgba(8, 12, 22, 0.65);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
+}
+
+.status-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  margin-bottom: 2px;
+}
+
+.status-card-title {
+  font-family: var(--font);
+  font-size: 17px;
+  font-weight: 600;
+  color: #ffffff;
+  letter-spacing: -0.01em;
+}
+
+.status-indicator-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  padding: 3px 8px;
+  border-radius: 0;
+}
+
+.status-dot-green {
+  width: 6px;
+  height: 6px;
+  background: #10b981;
+  box-shadow: 0 0 6px #10b981;
+  border-radius: 0;
 }
 
 .status-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding-bottom: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .status-row:last-child {
@@ -1576,13 +1705,221 @@ button {
 }
 
 .status-label {
-  font-size: 14px;
-  color: var(--color-text-secondary);
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.65);
 }
 
 .status-val {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.status-val--success {
+  color: #10b981 !important;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.status-val--highlight {
+  color: var(--blue-vibrant) !important;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Status Sub-boxes */
+.status-subbox {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0;
+  margin-top: -4px;
+  margin-bottom: 4px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.status-subbox-title {
+  margin-bottom: 6px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.lang-count-tag {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 2px 8px;
+  border-radius: 0;
+  font-size: 11px;
+}
+
+/* Integrated QR Block inside Status Card */
+.status-qr-block {
+  margin-top: 6px;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.status-qr-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.status-qr-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.status-qr-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: #7eb6ee;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 2px 4px;
+  transition: color 0.18s ease;
+}
+
+.status-qr-btn:hover {
+  color: var(--blue-vibrant);
+}
+
+.status-qr-display {
+  display: flex;
+  justify-content: center;
+  margin: 4px 0;
+}
+
+.status-qr-paper {
+  background: #ffffff;
+  padding: 10px;
+  border-radius: 0;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+
+.status-qr-note {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+  text-align: center;
+  line-height: 1.4;
+  margin: 0;
+}
+
+/* Secondary Action Buttons with Hero Wipe */
+.btn--action-secondary {
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 500;
+  color: #ffffff;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 0;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  padding: 0 16px;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.btn--action-secondary::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 108, 210, 0.35);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 0;
+}
+
+.btn--action-secondary:hover::before {
+  transform: scaleX(1);
+}
+
+.btn--action-secondary:hover {
+  border-color: var(--blue-vibrant);
+}
+
+.btn--action-secondary span,
+.btn--action-secondary svg {
+  position: relative;
+  z-index: 1;
+}
+
+/* Destructive / Finalizar Sesión Action Button */
+.btn--danger-ghost {
+  width: 100%;
+  height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: var(--font);
   font-size: 14px;
   font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 0;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  margin-top: 6px;
+  transition: border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.btn--danger-ghost::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #dc2626;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 0;
+}
+
+.btn--danger-ghost:hover::before {
+  transform: scaleX(1);
+}
+
+.btn--danger-ghost:hover {
+  color: #ffffff;
+  border-color: #dc2626;
+  box-shadow: 0 4px 18px rgba(220, 38, 38, 0.4);
+}
+
+.btn--danger-ghost span,
+.btn--danger-ghost svg {
+  position: relative;
+  z-index: 1;
 }
 
 /* Audio Visualizer Component */

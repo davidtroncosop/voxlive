@@ -614,7 +614,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                   <Headphones size={24} />
                   Panel de Escucha
                 </div>
-                <div className="room-code-tag">
+                <div className="room-code-plain">
                   Sala: <span className="room-code-value">{roomCode}</span>
                 </div>
               </div>
@@ -971,21 +971,22 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
               </div>
 
               <button
-                className="btn btn-danger"
-                style={{ width: '100%', marginTop: '8px' }}
+                type="button"
+                className="btn--danger-ghost"
                 onClick={leaveRoom}
               >
-                Salir de la Sala
+                <Square size={14} fill="currentColor" />
+                <span>Salir de la Sala</span>
               </button>
-            </div>
 
-            <div className="glass-card" style={{ padding: '20px' }}>
-              <h4 style={{ fontFamily: 'var(--font-heading)', fontSize: '15px', fontWeight: 600, marginBottom: '12px' }}>
-                ¿Consejo de escucha?
-              </h4>
-              <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', lineHeight: '1.5' }}>
-                Recomendamos utilizar auriculares para una experiencia óptima y clara de traducción en tiempo real.
-              </p>
+              <div className="status-qr-block" style={{ marginTop: '14px' }}>
+                <div className="status-qr-header">
+                  <span className="status-qr-label">¿Consejo de escucha?</span>
+                </div>
+                <p className="status-qr-note" style={{ textAlign: 'left', marginTop: '4px' }}>
+                  Recomendamos utilizar auriculares para una experiencia óptima y clara de traducción en tiempo real.
+                </p>
+              </div>
             </div>
           </div>
         </div>

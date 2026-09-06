@@ -13,7 +13,8 @@ import {
   Plus, 
   Trash2, 
   Wifi, 
-  Cpu 
+  Cpu,
+  Square 
 } from 'lucide-react';
 import { SUPPORTED_LANGUAGES } from '../types';
 import type { ConnectionStatus, CustomGlossaryTerm, NetworkQuality } from '../types';
@@ -539,20 +540,21 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
             <div className="glass-card" style={{ marginBottom: '32px' }}>
               <div className="panel-header">
                 <div className="panel-title">
-                  <Mic size={24} style={{ color: isRecording ? 'var(--color-danger)' : 'var(--color-primary)' }} />
+                  <Mic size={24} style={{ color: isRecording ? '#ef4444' : 'var(--blue)' }} />
                   Panel de Transmisión
                 </div>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <button 
-                    className="btn btn-secondary" 
-                    onClick={() => setShowQrModal(true)}
-                    style={{ padding: '6px 12px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}
-                  >
-                    <QrCode size={15} /> Compartir QR
-                  </button>
-                  <div className="room-code-tag">
+                <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+                  <div className="room-code-plain">
                     Sala: <span className="room-code-value">{roomCode}</span>
                   </div>
+                  <button 
+                    type="button"
+                    className="btn--action-secondary" 
+                    onClick={() => setShowQrModal(true)}
+                    style={{ height: '36px', padding: '0 14px', fontSize: '12px' }}
+                  >
+                    <QrCode size={14} /> <span>Compartir QR</span>
+                  </button>
                 </div>
               </div>
 
@@ -567,37 +569,37 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
                 <button 
                   className={`action-mic-btn ${isRecording ? 'active' : 'inactive'}`}
                   onClick={toggleRecording}
+                  aria-label={isRecording ? 'Detener transmisión de voz' : 'Iniciar transmisión de voz'}
                 >
-                  {isRecording ? <MicOff size={44} /> : <Mic size={44} />}
+                  {isRecording ? <MicOff size={42} /> : <Mic size={42} />}
                 </button>
                 <div className="action-mic-label">
                   {isRecording ? 'Tu voz está siendo transmitida' : 'Micrófono apagado'}
                 </div>
-                <p style={{ color: 'var(--color-text-secondary)', fontSize: '14px', maxWidth: '360px' }}>
+                <p style={{ color: 'rgba(255, 255, 255, 0.75)', fontSize: '14px', maxWidth: '360px', margin: 0 }}>
                   {isRecording 
                     ? 'Habla de forma natural. Los oyentes recibirán la traducción en tiempo real.'
                     : 'Haz clic en el micrófono para empezar a hablar.'}
                 </p>
 
                 {isRecording && (
-                  <div style={{ width: '100%', maxWidth: '300px', margin: '8px 0', padding: '10px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-light)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '6px', color: 'var(--color-text-secondary)' }}>
+                  <div style={{ width: '100%', maxWidth: '300px', margin: '4px 0', padding: '10px 14px', background: 'rgba(0, 0, 0, 0.45)', borderRadius: 0, border: '1px solid rgba(255, 255, 255, 0.12)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '6px', color: 'rgba(255, 255, 255, 0.8)' }}>
                       <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>🔴 Entrada (dB):</span>
                       <strong style={{ 
-                        fontFamily: 'var(--font-heading)',
-                        color: dbLevel > 75 ? 'var(--color-danger)' : dbLevel > 35 ? 'var(--color-secondary)' : 'var(--color-success)' 
+                        fontFamily: '"SF Mono", monospace',
+                        color: dbLevel > 75 ? 'var(--color-danger)' : dbLevel > 35 ? 'var(--blue-vibrant)' : 'var(--color-success)' 
                       }}>
                         {dbLevel > 0 ? `${Math.round((dbLevel * 60) / 100 - 60)} dB` : '-60 dB'} ({dbLevel}%)
                       </strong>
                     </div>
-                    <div style={{ width: '100%', height: '8px', background: 'rgba(0, 0, 0, 0.3)', borderRadius: '9999px', overflow: 'hidden' }}>
+                    <div style={{ width: '100%', height: '6px', background: 'rgba(255, 255, 255, 0.1)', borderRadius: 0, overflow: 'hidden' }}>
                       <div style={{
                         width: `${dbLevel}%`,
                         height: '100%',
-                        background: 'linear-gradient(to right, var(--color-success), var(--color-secondary), var(--color-danger))',
-                        boxShadow: '0 0 8px rgba(16, 185, 129, 0.3)',
-                        transition: 'width 0.05s ease-out',
-                        borderRadius: '9999px'
+                        background: 'linear-gradient(to right, #10b981, #38bdf8, #ef4444)',
+                        boxShadow: '0 0 8px rgba(56, 189, 248, 0.4)',
+                        transition: 'width 0.05s ease-out'
                       }} />
                     </div>
                   </div>
@@ -610,10 +612,10 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
             <div className="transcript-card">
               <div className="transcript-header">
                 <div className="transcript-header-title">
-                  <Sparkles size={18} style={{ color: 'var(--color-primary)' }} />
+                  <Sparkles size={18} style={{ color: 'var(--blue-vibrant)' }} />
                   Transcripción de tu Voz (En Tiempo Real)
                 </div>
-                <span className="badge badge-live">
+                <span className="badge-live">
                   <span className="pulse-dot"></span> LIVE
                 </span>
               </div>
@@ -641,80 +643,63 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
           {/* Sidebar */}
           <div className="sidebar-panel">
             <div className="status-card">
-              <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '18px', fontWeight: 600 }}>Estado de la Transmisión</h3>
+              <div className="status-card-header">
+                <h3 className="status-card-title">Estado de la Transmisión</h3>
+                <span className="status-indicator-badge">
+                  <span className="status-dot-green"></span> En Línea
+                </span>
+              </div>
               
               <div className="status-row">
                 <span className="status-label">Servidor</span>
-                <span className="status-val" style={{ color: 'var(--color-success)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <span className="status-val status-val--success">
                   <CheckCircle2 size={14} /> Cloudflare Edge
                 </span>
               </div>
 
               <div className="status-row">
                 <span className="status-label">Latencia (RTT)</span>
-                <span className="status-val" style={{ 
-                  color: networkQuality.status === 'excellent' || networkQuality.status === 'good' ? 'var(--color-success)' : 'var(--color-secondary)',
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '4px' 
-                }}>
+                <span className="status-val status-val--highlight">
                   <Wifi size={14} /> {networkQuality.rttMs ? `${networkQuality.rttMs} ms` : 'Midiendo...'}
                 </span>
               </div>
 
               <div className="status-row">
                 <span className="status-label">Motor de Audio</span>
-                <span className="status-val" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px' }}>
+                <span className="status-val" style={{ fontSize: '12px' }}>
                   <Cpu size={14} /> {audioMode === 'worklet' ? 'AudioWorklet (Zero Glitch)' : 'ScriptProcessor'}
                 </span>
               </div>
 
               <div className="status-row">
                 <span className="status-label">API de IA</span>
-                <span className="status-val" style={{ color: providerReady === false ? 'var(--color-danger)' : undefined }}>
+                <span className="status-val" style={{ color: providerReady === false ? '#ef4444' : undefined }}>
                   {TRANSLATION_PROVIDER.model}
                 </span>
               </div>
 
               <div className="status-row">
                 <span className="status-label">Oyentes en Sala</span>
-                <span className="status-val" style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
+                <span className="status-val" style={{ fontWeight: 600 }}>
                   <Users size={16} /> {activeListeners}
                 </span>
               </div>
 
               {activeListeners > 0 && (
-                <div style={{
-                  fontSize: '11px',
-                  color: 'var(--color-text-secondary)',
-                  padding: '6px 10px',
-                  background: 'rgba(255, 255, 255, 0.03)',
-                  borderRadius: '6px',
-                  marginTop: '-4px',
-                  marginBottom: '8px',
-                  display: 'flex',
-                  justifyContent: 'space-between'
-                }}>
-                  <span>🎧 Audio: <strong style={{ color: 'var(--color-secondary)' }}>{audioListeners}</strong></span>
+                <div className="status-subbox">
+                  <span>🎧 Audio: <strong style={{ color: '#38bdf8' }}>{audioListeners}</strong></span>
                   <span>📝 Subtítulos: <strong style={{ color: '#10b981' }}>{textOnlyListeners}</strong></span>
                 </div>
               )}
 
               {Object.keys(langCounts).length > 0 && (
-                <div style={{
-                  fontSize: '11px',
-                  color: 'var(--color-text-secondary)',
-                  padding: '6px 10px',
-                  background: 'rgba(255, 255, 255, 0.03)',
-                  borderRadius: '6px',
-                  marginBottom: '8px'
-                }}>
-                  <div style={{ marginBottom: '4px', color: 'var(--color-text-muted)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Distribución de Idiomas:</div>
+                <div className="status-subbox">
+                  <div className="status-subbox-title">Distribución de Idiomas:</div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                     {Object.entries(langCounts).map(([lCode, count]) => {
                       const lInfo = SUPPORTED_LANGUAGES.find(l => l.code === lCode);
                       return (
-                        <span key={lCode} style={{ background: 'rgba(255, 255, 255, 0.06)', padding: '2px 6px', borderRadius: '4px' }}>
+                        <span key={lCode} className="lang-count-tag">
                           {lInfo?.flag || '🌐'} {lInfo?.name || lCode}: <strong>{count}</strong>
                         </span>
                       );
@@ -730,45 +715,54 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
                 </span>
               </div>
 
-              <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+              {/* Integrated QR Block inside the status card */}
+              <div className="status-qr-block">
+                <div className="status-qr-header">
+                  <span className="status-qr-label">Acceso para Oyentes</span>
+                  <button 
+                    type="button" 
+                    className="status-qr-btn"
+                    onClick={() => setShowQrModal(true)}
+                  >
+                    <QrCode size={13} /> <span>Ampliar</span>
+                  </button>
+                </div>
+                <div className="status-qr-display">
+                  <div className="status-qr-paper">
+                    <QRCode value={getInviteUrl()} size={140} fgColor="#000000" bgColor="#ffffff" />
+                  </div>
+                </div>
+                <p className="status-qr-note">
+                  Los oyentes escanean con su móvil para escuchar en vivo
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
                 <button 
-                  className="btn btn-secondary" 
+                  type="button"
+                  className="btn--action-secondary" 
                   onClick={() => setShowGlossaryModal(true)}
-                  style={{ flex: 1, padding: '8px 12px', fontSize: '13px' }}
                 >
-                  <BookOpen size={14} /> Glosario ({glossaryTerms.length})
+                  <BookOpen size={14} /> <span>Glosario ({glossaryTerms.length})</span>
                 </button>
                 <button 
-                  className="btn btn-secondary" 
+                  type="button"
+                  className="btn--action-secondary" 
                   onClick={copyInviteLink}
-                  style={{ flex: 1, padding: '8px 12px', fontSize: '13px' }}
                 >
-                  {copiedLink ? <Check size={14} color="var(--color-success)" /> : <Copy size={14} />}
-                  {copiedLink ? '¡Copiado!' : 'Copiar Link'}
+                  {copiedLink ? <Check size={14} color="#10b981" /> : <Copy size={14} />}
+                  <span>{copiedLink ? '¡Copiado!' : 'Copiar Link'}</span>
                 </button>
               </div>
 
               <button 
-                className="btn btn-danger" 
+                type="button"
+                className="btn--danger-ghost" 
                 onClick={stopSession}
-                style={{ width: '100%', marginTop: '12px' }}
               >
-                Finalizar Sesión
+                <Square size={14} fill="currentColor" />
+                <span>Finalizar Sesión</span>
               </button>
-            </div>
-
-            <div className="glass-card" style={{ padding: '20px', textAlign: 'center' }}>
-              <h4 style={{ fontFamily: 'var(--font-heading)', fontSize: '15px', fontWeight: 600, marginBottom: '12px' }}>
-                Código QR para Oyentes
-              </h4>
-              <div style={{ display: 'flex', justifyContent: 'center', margin: '12px 0' }}>
-                <div style={{ background: '#ffffff', padding: '12px', borderRadius: '12px' }}>
-                  <QRCode value={getInviteUrl()} size={160} fgColor="#000000" bgColor="#ffffff" />
-                </div>
-              </div>
-              <p style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
-                Los oyentes pueden escanear este código con su móvil para unirse de inmediato.
-              </p>
             </div>
           </div>
         </div>
