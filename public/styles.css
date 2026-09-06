@@ -660,6 +660,96 @@ button {
   justify-content: center;
 }
 
+/* How It Works Modal Content */
+.modal-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.modal-step-item {
+  display: flex;
+  gap: 14px;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0;
+}
+
+.modal-step-num {
+  font-family: "SF Mono", monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--blue-vibrant);
+  flex-shrink: 0;
+  padding-top: 1px;
+}
+
+.modal-step-content h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #ffffff;
+  margin-bottom: 4px;
+  letter-spacing: -0.01em;
+}
+
+.modal-step-content p {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.45;
+  margin: 0;
+}
+
+/* Languages Modal Content */
+.modal-languages-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.modal-language-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0;
+}
+
+.modal-language-flag {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.modal-language-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-language-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.modal-language-sub {
+  font-size: 11px;
+  color: #7eb6ee;
+}
+
+.modal-note-box {
+  padding: 10px 14px;
+  background: rgba(0, 108, 210, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+  line-height: 1.4;
+  margin-bottom: 20px;
+}
+
 /* Session views container */
 .session-container {
   position: relative;

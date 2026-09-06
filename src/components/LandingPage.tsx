@@ -7,6 +7,8 @@ interface LandingPageProps {
 
 export const LandingPage: React.FC<LandingPageProps> = ({ onSelectRole }) => {
   const [showJoinModal, setShowJoinModal] = useState(false);
+  const [showHowItWorks, setShowHowItWorks] = useState(false);
+  const [showLanguagesModal, setShowLanguagesModal] = useState(false);
   const [roomCodeInput, setRoomCodeInput] = useState("");
   const [roomError, setRoomError] = useState("");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -27,6 +29,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSelectRole }) => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setShowJoinModal(false);
+        setShowHowItWorks(false);
+        setShowLanguagesModal(false);
         setIsMobileMenuOpen(false);
       }
     };
@@ -45,10 +49,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSelectRole }) => {
 
       <header className="nav">
         <nav className="nav__links" aria-label="Principal">
-          <a href="#" className="nav__link" style={{ "--d": "0.02s" } as React.CSSProperties} onClick={(e) => { e.preventDefault(); setShowJoinModal(true); }}>Plataforma</a>
-          <a href="#" className="nav__link" style={{ "--d": "0.08s" } as React.CSSProperties} onClick={(e) => { e.preventDefault(); setShowJoinModal(true); }}>Soluciones</a>
-          <a href="#" className="nav__link" style={{ "--d": "0.14s" } as React.CSSProperties} onClick={(e) => { e.preventDefault(); onSelectRole("guide"); }}>Empresa</a>
-          <a href="#" className="nav__link" style={{ "--d": "0.20s" } as React.CSSProperties} onClick={(e) => { e.preventDefault(); onSelectRole("guide"); }}>Precios</a>
+          <a href="#" className="nav__link" style={{ "--d": "0.02s" } as React.CSSProperties} onClick={(e) => { e.preventDefault(); setShowHowItWorks(true); }}>¿Cómo Funciona?</a>
+          <a href="#" className="nav__link" style={{ "--d": "0.08s" } as React.CSSProperties} onClick={(e) => { e.preventDefault(); setShowLanguagesModal(true); }}>Idiomas</a>
+          <a href="#" className="nav__link" style={{ "--d": "0.14s" } as React.CSSProperties} onClick={(e) => { e.preventDefault(); setShowJoinModal(true); }}>Unirse a Sala</a>
+          <a href="#" className="nav__link" style={{ "--d": "0.20s" } as React.CSSProperties} onClick={(e) => { e.preventDefault(); onSelectRole("guide"); }}>Crear Sesión</a>
         </nav>
 
         <a className="logo" href="#" aria-label="Voxlive" onClick={(e) => e.preventDefault()}>
@@ -97,10 +101,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSelectRole }) => {
       {isMobileMenuOpen && (
         <div id="mobile-menu" className="mobile-menu">
           <div className="mobile-menu__links">
-            <a href="#" className="mobile-menu__link" onClick={(e) => { e.preventDefault(); setIsMobileMenuOpen(false); setShowJoinModal(true); }}>Plataforma</a>
-            <a href="#" className="mobile-menu__link" onClick={(e) => { e.preventDefault(); setIsMobileMenuOpen(false); setShowJoinModal(true); }}>Soluciones</a>
-            <a href="#" className="mobile-menu__link" onClick={(e) => { e.preventDefault(); setIsMobileMenuOpen(false); onSelectRole("guide"); }}>Empresa</a>
-            <a href="#" className="mobile-menu__link" onClick={(e) => { e.preventDefault(); setIsMobileMenuOpen(false); onSelectRole("guide"); }}>Precios</a>
+            <a href="#" className="mobile-menu__link" onClick={(e) => { e.preventDefault(); setIsMobileMenuOpen(false); setShowHowItWorks(true); }}>¿Cómo Funciona?</a>
+            <a href="#" className="mobile-menu__link" onClick={(e) => { e.preventDefault(); setIsMobileMenuOpen(false); setShowLanguagesModal(true); }}>Idiomas</a>
+            <a href="#" className="mobile-menu__link" onClick={(e) => { e.preventDefault(); setIsMobileMenuOpen(false); setShowJoinModal(true); }}>Unirse a Sala</a>
+            <a href="#" className="mobile-menu__link" onClick={(e) => { e.preventDefault(); setIsMobileMenuOpen(false); onSelectRole("guide"); }}>Crear Sesión</a>
           </div>
           <a 
             href="#" 
@@ -234,6 +238,188 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSelectRole }) => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {showHowItWorks && (
+        <div className="modal-overlay" onClick={() => setShowHowItWorks(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h3 className="modal-title">¿Cómo Funciona Voxlive?</h3>
+                <p className="modal-subtitle">Traducción de voz simultánea y subtítulos en 3 pasos</p>
+              </div>
+              <button 
+                type="button" 
+                className="modal-close-btn"
+                onClick={() => setShowHowItWorks(false)}
+                aria-label="Cerrar"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="modal-steps-list">
+              <div className="modal-step-item">
+                <span className="modal-step-num">01</span>
+                <div className="modal-step-content">
+                  <h4>Crea una Sala en Segundos</h4>
+                  <p>El orador o guía inicia una sesión eligiendo su idioma de origen. El sistema genera un código y QR exclusivo al instante.</p>
+                </div>
+              </div>
+              <div className="modal-step-item">
+                <span className="modal-step-num">02</span>
+                <div className="modal-step-content">
+                  <h4>La Audiencia se Une sin Descargas</h4>
+                  <p>Los oyentes escanean el código QR desde cualquier smartphone o navegador y seleccionan su idioma preferido.</p>
+                </div>
+              </div>
+              <div className="modal-step-item">
+                <span className="modal-step-num">03</span>
+                <div className="modal-step-content">
+                  <h4>Voz y Subtítulos en Tiempo Real</h4>
+                  <p>La IA traduce el discurso con latencia ultra-baja (&lt;150ms) en la red global Cloudflare Edge con audio HD.</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="modal-actions">
+              <button 
+                type="button" 
+                className="btn btn--nav modal-btn"
+                onClick={() => {
+                  setShowHowItWorks(false);
+                  onSelectRole("guide");
+                }}
+              >
+                <span className="btn__label">Crear Sesión Ahora</span>
+                <span className="btn__icon">
+                  <svg className="arrow-svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 10h10.2M10.4 5.6 15.2 10l-4.8 4.4" />
+                  </svg>
+                </span>
+              </button>
+              <button 
+                type="button" 
+                className="btn btn--ghost modal-btn"
+                onClick={() => {
+                  setShowHowItWorks(false);
+                  setShowJoinModal(true);
+                }}
+              >
+                <span className="btn__label">Unirme a una Sala</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showLanguagesModal && (
+        <div className="modal-overlay" onClick={() => setShowLanguagesModal(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h3 className="modal-title">Idiomas Disponibles</h3>
+                <p className="modal-subtitle">Traducción bidireccional con síntesis de voz neural y subtítulos</p>
+              </div>
+              <button 
+                type="button" 
+                className="modal-close-btn"
+                onClick={() => setShowLanguagesModal(false)}
+                aria-label="Cerrar"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="modal-languages-grid">
+              <div className="modal-language-card">
+                <span className="modal-language-flag">🇪🇸</span>
+                <div className="modal-language-info">
+                  <span className="modal-language-name">Español</span>
+                  <span className="modal-language-sub">Voz + Subtítulos</span>
+                </div>
+              </div>
+              <div className="modal-language-card">
+                <span className="modal-language-flag">🇺🇸</span>
+                <div className="modal-language-info">
+                  <span className="modal-language-name">English</span>
+                  <span className="modal-language-sub">Voz + Subtítulos</span>
+                </div>
+              </div>
+              <div className="modal-language-card">
+                <span className="modal-language-flag">🇫🇷</span>
+                <div className="modal-language-info">
+                  <span className="modal-language-name">Français</span>
+                  <span className="modal-language-sub">Voz + Subtítulos</span>
+                </div>
+              </div>
+              <div className="modal-language-card">
+                <span className="modal-language-flag">🇩🇪</span>
+                <div className="modal-language-info">
+                  <span className="modal-language-name">Deutsch</span>
+                  <span className="modal-language-sub">Voz + Subtítulos</span>
+                </div>
+              </div>
+              <div className="modal-language-card">
+                <span className="modal-language-flag">🇮🇹</span>
+                <div className="modal-language-info">
+                  <span className="modal-language-name">Italiano</span>
+                  <span className="modal-language-sub">Voz + Subtítulos</span>
+                </div>
+              </div>
+              <div className="modal-language-card">
+                <span className="modal-language-flag">🇯🇵</span>
+                <div className="modal-language-info">
+                  <span className="modal-language-name">日本語</span>
+                  <span className="modal-language-sub">Voz + Subtítulos</span>
+                </div>
+              </div>
+              <div className="modal-language-card">
+                <span className="modal-language-flag">🇵🇹</span>
+                <div className="modal-language-info">
+                  <span className="modal-language-name">Português</span>
+                  <span className="modal-language-sub">Voz + Subtítulos</span>
+                </div>
+              </div>
+              <div className="modal-language-card">
+                <span className="modal-language-flag">🇨🇳</span>
+                <div className="modal-language-info">
+                  <span className="modal-language-name">中文</span>
+                  <span className="modal-language-sub">Voz + Subtítulos</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="modal-note-box">
+              Cada oyente en la sala puede escuchar o leer en un idioma diferente de manera independiente y en tiempo real.
+            </div>
+
+            <div className="modal-actions">
+              <button 
+                type="button" 
+                className="btn btn--nav modal-btn"
+                onClick={() => {
+                  setShowLanguagesModal(false);
+                  onSelectRole("guide");
+                }}
+              >
+                <span className="btn__label">Probar Ahora</span>
+                <span className="btn__icon">
+                  <svg className="arrow-svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 10h10.2M10.4 5.6 15.2 10l-4.8 4.4" />
+                  </svg>
+                </span>
+              </button>
+              <button 
+                type="button" 
+                className="btn btn--ghost modal-btn"
+                onClick={() => setShowLanguagesModal(false)}
+              >
+                <span className="btn__label">Cerrar</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
