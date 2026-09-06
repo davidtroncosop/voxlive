@@ -3,7 +3,6 @@ import {
   Mic, 
   MicOff, 
   Users, 
-  ArrowLeft, 
   Sparkles, 
   CheckCircle2, 
   AlertCircle, 
@@ -24,6 +23,7 @@ import { createAudioRecorderNode } from '../utils/audioWorklet';
 import { wakeLockManager } from '../utils/wakeLock';
 import QRCode from './QRCode';
 import Visualizer from './Visualizer';
+import { GlassSelect } from './GlassSelect';
 
 interface GuideSessionProps {
   onBack: () => void;
@@ -425,104 +425,111 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
   return (
     <div style={{ width: '100%' }}>
       {status === 'idle' || status === 'connecting' || status === 'error' ? (
-        <div style={{ maxWidth: '500px', margin: '40px auto' }} className="glass-card">
-          <button className="btn btn-secondary" onClick={onBack} style={{ alignSelf: 'flex-start', marginBottom: '24px', padding: '8px 16px' }}>
-            <ArrowLeft size={16} /> Volver
-          </button>
-
-          <h2 style={{ fontFamily: 'var(--font-heading)', fontSize: '32px', marginBottom: '12px' }}>Crear una Sesión</h2>
-          <p style={{ color: 'var(--color-text-secondary)', marginBottom: '28px', fontSize: '15px' }}>
-            Configura tu idioma nativo y crea una sala de transmisión en tiempo real con baja latencia.
-          </p>
-
-          {errorMsg && (
-            <div className="connection-banner">
-              <AlertCircle size={16} />
-              <span>{errorMsg}</span>
-            </div>
-          )}
-
-          <div className="form-group" style={{ marginBottom: '20px', textAlign: 'left' }}>
-            <label className="form-label">Tu Idioma de Origen</label>
-            <select
-              className="glass-input glass-select"
-              value={selectedLanguage}
-              onChange={(e) => setSelectedLanguage(e.target.value)}
-              disabled={status === 'connecting'}
-            >
-              {SUPPORTED_LANGUAGES.map((lang) => (
-                <option key={lang.code} value={lang.code}>
-                  {lang.flag} {lang.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="form-group" style={{ marginBottom: '24px', textAlign: 'left' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-              <label className="form-label" style={{ margin: 0 }}>Glosario / Términos Protegidos (Opcional)</label>
-              <span style={{ fontSize: '12px', color: 'var(--color-primary)' }}>{glossaryTerms.length} añadidos</span>
-            </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <input
-                type="text"
-                className="glass-input"
-                placeholder="Ej. Nombre del ponente o marca"
-                value={newTermCanonical}
-                onChange={(e) => setNewTermCanonical(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleAddGlossaryTerm();
-                  }
-                }}
-              />
-              <button 
-                type="button" 
-                className="btn btn-secondary" 
-                onClick={handleAddGlossaryTerm}
-                style={{ padding: '0 16px' }}
-              >
-                <Plus size={16} />
+        <div className="setup-card-wrapper">
+          <div className="setup-card-glass">
+            <div className="setup-card-header">
+              <button type="button" className="setup-back-btn" onClick={onBack}>
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square">
+                  <path d="M9 11L5 7L9 3" />
+                </svg>
+                <span>Volver al inicio</span>
               </button>
+              <span className="setup-badge">Configuración</span>
             </div>
-            {glossaryTerms.length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '10px' }}>
-                {glossaryTerms.map((term, i) => (
-                  <span 
-                    key={i} 
-                    style={{ 
-                      background: 'rgba(139, 92, 246, 0.15)', 
-                      border: '1px solid rgba(139, 92, 246, 0.3)', 
-                      borderRadius: 'var(--radius-full)', 
-                      padding: '4px 10px', 
-                      fontSize: '12px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px'
-                    }}
-                  >
-                    {term.canonical}
-                    <Trash2 
-                      size={12} 
-                      style={{ cursor: 'pointer', opacity: 0.7 }} 
-                      onClick={() => handleRemoveGlossaryTerm(i)} 
-                    />
-                  </span>
-                ))}
+
+            <div className="setup-title-group">
+              <h2 className="setup-title">Crear una Sesión</h2>
+              <p className="setup-subtitle">
+                Configura tu idioma nativo y crea una sala de transmisión en tiempo real con baja latencia.
+              </p>
+            </div>
+
+            {errorMsg && (
+              <div className="connection-banner">
+                <AlertCircle size={16} />
+                <span>{errorMsg}</span>
               </div>
             )}
-          </div>
 
-          <div style={{ display: 'flex', width: '100%' }}>
-            <button
-              className="btn btn-primary"
-              style={{ flex: 1 }}
-              onClick={startSession}
-              disabled={status === 'connecting'}
-            >
-              {status === 'connecting' ? 'Iniciando Sala...' : 'Crear Sala'}
-            </button>
+            <div className="setup-form-body">
+              <div className="form-group">
+                <label className="setup-field-label">Tu Idioma de Origen</label>
+                <GlassSelect
+                  value={selectedLanguage}
+                  options={SUPPORTED_LANGUAGES}
+                  onChange={setSelectedLanguage}
+                  disabled={status === 'connecting'}
+                />
+              </div>
+
+              <div className="form-group">
+                <div className="setup-field-header">
+                  <label className="setup-field-label">
+                    Glosario / Términos Protegidos <span className="setup-optional">(Opcional)</span>
+                  </label>
+                  <span className="setup-counter">{glossaryTerms.length} añadidos</span>
+                </div>
+                <div className="setup-input-with-action">
+                  <input
+                    type="text"
+                    className="setup-text-input"
+                    placeholder="Ej. Nombre del ponente o marca"
+                    value={newTermCanonical}
+                    onChange={(e) => setNewTermCanonical(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddGlossaryTerm();
+                      }
+                    }}
+                  />
+                  <button 
+                    type="button" 
+                    className="setup-square-btn"
+                    onClick={handleAddGlossaryTerm}
+                    title="Añadir término al glosario"
+                    aria-label="Añadir término al glosario"
+                  >
+                    <Plus size={18} strokeWidth={2.4} />
+                  </button>
+                </div>
+
+                {glossaryTerms.length > 0 && (
+                  <div className="setup-chips-container">
+                    {glossaryTerms.map((term, i) => (
+                      <span key={i} className="setup-chip">
+                        <span>{term.canonical}</span>
+                        <button
+                          type="button"
+                          className="setup-chip-remove"
+                          onClick={() => handleRemoveGlossaryTerm(i)}
+                          title={`Eliminar ${term.canonical}`}
+                          aria-label={`Eliminar ${term.canonical}`}
+                        >
+                          <Trash2 size={12} strokeWidth={2} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                className="btn btn--nav setup-submit-btn"
+                onClick={startSession}
+                disabled={status === 'connecting'}
+              >
+                <span className="btn__label">
+                  {status === 'connecting' ? 'Iniciando Sala...' : 'Crear Sala'}
+                </span>
+                <span className="btn__icon">
+                  <svg className="arrow-svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 10h10.2M10.4 5.6 15.2 10l-4.8 4.4" />
+                  </svg>
+                </span>
+              </button>
+            </div>
           </div>
         </div>
       ) : (

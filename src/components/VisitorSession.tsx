@@ -3,7 +3,6 @@ import {
   Headphones, 
   Volume2, 
   VolumeX, 
-  ArrowLeft, 
   Users, 
   Globe, 
   Play, 
@@ -20,6 +19,7 @@ import { base64ToBytes, decodeAudioFrame } from '../../shared/audioProtocol';
 import { wakeLockManager } from '../utils/wakeLock';
 import { backgroundAudioManager } from '../utils/backgroundAudio';
 import Visualizer from './Visualizer';
+import { GlassSelect } from './GlassSelect';
 
 const MIN_JITTER_BUFFER_SECONDS = 0.035;
 const MAX_QUEUED_AUDIO_SECONDS = 0.35;
@@ -530,73 +530,79 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
   return (
     <div style={{ width: '100%' }}>
       {!hasJoined ? (
-        <div style={{ maxWidth: '480px', margin: '40px auto' }} className="glass-card">
-          <button className="btn btn-secondary" onClick={onBack} style={{ alignSelf: 'flex-start', marginBottom: '24px', padding: '8px 16px' }}>
-            <ArrowLeft size={16} /> Volver
-          </button>
-
-          <h2 className="join-title">Unirse a una Sesión</h2>
-          <p className="join-desc">Introduce el código de la sala o escanea el QR del guía para escuchar la traducción.</p>
-
-          {errorMsg && (
-            <div className="connection-banner">
-              <AlertCircle size={16} />
-              <span>{errorMsg}</span>
+        <div className="setup-card-wrapper">
+          <div className="setup-card-glass">
+            <div className="setup-card-header">
+              <button type="button" className="setup-back-btn" onClick={onBack}>
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square">
+                  <path d="M9 11L5 7L9 3" />
+                </svg>
+                <span>Volver al inicio</span>
+              </button>
+              <span className="setup-badge">Audiencia</span>
             </div>
-          )}
 
-          <div className="form-group" style={{ marginBottom: '24px' }}>
-            <label className="form-label" style={{ textAlign: 'left', display: 'block', marginBottom: '8px' }}>
-              Código de Sala
-            </label>
-            <input
-              type="text"
-              placeholder="Ej. 1234 o VOX-7K9"
-              value={roomCodeInput}
-              onChange={(e) => setRoomCodeInput(e.target.value.toUpperCase())}
-              className="glass-input"
-              style={{
-                textAlign: 'center',
-                letterSpacing: '3px',
-                fontSize: '22px',
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                fontFamily: 'monospace'
-              }}
-              disabled={status === 'connecting'}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  joinRoom();
-                }
-              }}
-            />
+            <div className="setup-title-group">
+              <h2 className="setup-title">Unirse a una Sesión</h2>
+              <p className="setup-subtitle">
+                Introduce el código de la sala o escanea el QR del guía para escuchar la traducción en tiempo real.
+              </p>
+            </div>
+
+            {errorMsg && (
+              <div className="connection-banner">
+                <AlertCircle size={16} />
+                <span>{errorMsg}</span>
+              </div>
+            )}
+
+            <div className="setup-form-body">
+              <div className="form-group">
+                <label className="setup-field-label">Código de Sala</label>
+                <input
+                  type="text"
+                  placeholder="EJ. 1234 O VOX-7K9"
+                  value={roomCodeInput}
+                  onChange={(e) => setRoomCodeInput(e.target.value.toUpperCase())}
+                  className="setup-text-input setup-room-code-input"
+                  disabled={status === 'connecting'}
+                  maxLength={10}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      joinRoom();
+                    }
+                  }}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="setup-field-label">Escuchar traducción en</label>
+                <GlassSelect
+                  value={selectedLanguage}
+                  options={SUPPORTED_LANGUAGES}
+                  onChange={setSelectedLanguage}
+                  disabled={status === 'connecting'}
+                />
+              </div>
+
+              <button
+                type="button"
+                className="btn btn--nav setup-submit-btn"
+                onClick={() => joinRoom()}
+                disabled={status === 'connecting' || roomCodeInput.trim().length < 4}
+              >
+                <span className="btn__label">
+                  {status === 'connecting' ? 'Conectando a la Sala...' : 'Unirse a la Sesión'}
+                </span>
+                <span className="btn__icon">
+                  <svg className="arrow-svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 10h10.2M10.4 5.6 15.2 10l-4.8 4.4" />
+                  </svg>
+                </span>
+              </button>
+            </div>
           </div>
-
-          <div className="form-group" style={{ marginBottom: '32px', textAlign: 'left' }}>
-            <label className="form-label">Escuchar traducción en</label>
-            <select
-              className="glass-input glass-select"
-              value={selectedLanguage}
-              onChange={(e) => setSelectedLanguage(e.target.value)}
-              disabled={status === 'connecting'}
-            >
-              {SUPPORTED_LANGUAGES.map((lang) => (
-                <option key={lang.code} value={lang.code}>
-                  {lang.flag} {lang.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <button
-            className="btn btn-primary"
-            style={{ width: '100%' }}
-            onClick={() => joinRoom()}
-            disabled={status === 'connecting' || roomCodeInput.trim().length < 4}
-          >
-            {status === 'connecting' ? 'Conectando a la Sala...' : 'Unirse a la Sesión'}
-          </button>
         </div>
       ) : (
         <div className="session-layout">

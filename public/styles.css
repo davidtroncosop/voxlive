@@ -719,6 +719,8 @@ button {
   width: 100%;
   max-width: 1100px;
   margin: 0 auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .session-container .glass-card,
@@ -734,10 +736,11 @@ button {
 }
 
 .session-container .glass-card {
-  background: rgba(14, 17, 26, 0.9);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  background: rgba(8, 12, 22, 0.68);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
 }
 
 .session-container .btn-primary {
@@ -755,6 +758,415 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.18);
   color: #ffffff;
   border-radius: 0;
+}
+
+/* ==========================================================================
+   SETUP CARD (Crear Sesión & Unirse a Sesión) DESIGN SYSTEM
+   ========================================================================== */
+
+.setup-card-wrapper {
+  width: 100%;
+  flex: 1;
+  min-height: calc(100vh - 160px);
+  min-height: calc(100dvh - 160px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  animation: mark-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+.setup-card-glass {
+  width: 100%;
+  max-width: 520px;
+  background: rgba(8, 12, 22, 0.65);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+  padding: 38px 40px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.setup-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.setup-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 4px 0;
+  transition: color 0.2s ease, transform 0.2s ease;
+}
+
+.setup-back-btn:hover {
+  color: var(--blue-vibrant);
+  transform: translateX(-3px);
+}
+
+.setup-badge {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #7eb6ee;
+  background: rgba(0, 108, 210, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  padding: 4px 10px;
+  border-radius: 0;
+}
+
+.setup-title-group {
+  margin-bottom: 28px;
+}
+
+.setup-title {
+  font-family: var(--font);
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  color: #ffffff;
+  line-height: 1.2;
+  margin-bottom: 10px;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+
+.setup-subtitle {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
+}
+
+.setup-form-body {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.setup-field-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.setup-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.88);
+  margin-bottom: 8px;
+  display: block;
+}
+
+.setup-field-header .setup-field-label {
+  margin-bottom: 0;
+}
+
+.setup-optional {
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: none;
+  font-size: 11px;
+}
+
+.setup-counter {
+  font-size: 12px;
+  font-weight: 600;
+  color: #7eb6ee;
+  letter-spacing: -0.01em;
+  text-shadow: 0 0 10px rgba(126, 182, 238, 0.35);
+}
+
+/* Glass Inputs */
+.setup-text-input,
+.glass-input {
+  width: 100%;
+  height: 50px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 0;
+  color: #ffffff;
+  font-family: var(--font);
+  font-size: 15px;
+  padding: 0 16px;
+  outline: none;
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.setup-text-input:focus,
+.glass-input:focus {
+  border-color: var(--blue-vibrant);
+  background: rgba(0, 0, 0, 0.6);
+  box-shadow: 0 0 0 1px var(--blue-vibrant), 0 4px 16px rgba(56, 189, 248, 0.2);
+}
+
+.setup-text-input::placeholder,
+.glass-input::placeholder {
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 14px;
+}
+
+.setup-room-code-input {
+  height: 56px;
+  text-align: center;
+  letter-spacing: 4px;
+  font-size: 22px;
+  font-weight: 700;
+  text-transform: uppercase;
+  font-family: "SF Mono", "Fira Code", monospace;
+  color: var(--blue-vibrant);
+}
+
+.setup-input-with-action {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+}
+
+.setup-input-with-action .setup-text-input {
+  flex: 1;
+  border-right: none;
+}
+
+.setup-square-btn {
+  width: 50px;
+  height: 50px;
+  flex-shrink: 0;
+  background: var(--blue);
+  color: #ffffff;
+  border: 1px solid var(--blue);
+  border-radius: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+}
+
+.setup-square-btn:hover {
+  background: var(--blue-dark);
+  border-color: var(--blue-dark);
+}
+
+.setup-square-btn:active {
+  transform: scale(0.96);
+}
+
+/* Custom Glass Select Dropdown */
+.glass-select-container {
+  position: relative;
+  width: 100%;
+}
+
+.glass-select-trigger {
+  width: 100%;
+  height: 50px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 0;
+  color: #ffffff;
+  font-family: var(--font);
+  font-size: 15px;
+  font-weight: 500;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.glass-select-trigger:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.35);
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.glass-select-container.is-open .glass-select-trigger,
+.glass-select-trigger:focus {
+  border-color: var(--blue-vibrant);
+  box-shadow: 0 0 0 1px var(--blue-vibrant), 0 4px 16px rgba(56, 189, 248, 0.2);
+}
+
+.glass-select-value {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.glass-select-flag {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.glass-select-name {
+  color: #ffffff;
+  letter-spacing: -0.01em;
+}
+
+.glass-select-placeholder {
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.glass-select-arrow {
+  color: rgba(255, 255, 255, 0.6);
+  display: flex;
+  align-items: center;
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), color 0.2s ease;
+}
+
+.glass-select-arrow.is-rotated {
+  transform: rotate(180deg);
+  color: var(--blue-vibrant);
+}
+
+.glass-select-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 60;
+  background: rgba(8, 11, 20, 0.95);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 0;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
+  max-height: 260px;
+  overflow-y: auto;
+  list-style: none;
+  padding: 6px 0;
+  margin: 0;
+  animation: mark-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-select-option {
+  padding: 11px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+  font-size: 14px;
+}
+
+.glass-select-option:hover {
+  background: rgba(0, 108, 210, 0.3);
+  color: #ffffff;
+}
+
+.glass-select-option.is-selected {
+  background: rgba(0, 108, 210, 0.45);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.glass-select-option-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.glass-select-check {
+  color: var(--blue-vibrant);
+  flex-shrink: 0;
+}
+
+/* Glossary Chips */
+.setup-chips-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.setup-chip {
+  background: rgba(0, 108, 210, 0.18);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 0;
+  color: #ffffff;
+  padding: 6px 10px 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  letter-spacing: -0.01em;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.setup-chip:hover {
+  background: rgba(0, 108, 210, 0.28);
+  border-color: rgba(56, 189, 248, 0.6);
+}
+
+.setup-chip-remove {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  transition: color 0.18s ease;
+}
+
+.setup-chip-remove:hover {
+  color: #ef4444;
+}
+
+/* 58px Submit Button matching hero button family */
+.setup-submit-btn {
+  width: 100%;
+  height: 58px;
+  margin-top: 8px;
+  justify-content: space-between;
+  border-radius: 0;
+  background: var(--blue);
+  color: #ffffff;
+  box-shadow: 0 6px 20px rgba(0, 108, 210, 0.4);
+}
+
+.setup-submit-btn:hover:not(:disabled) {
+  box-shadow: 0 8px 26px rgba(0, 108, 210, 0.55);
+}
+
+.setup-submit-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+@media (max-width: 600px) {
+  .setup-card-glass {
+    padding: 28px 22px;
+  }
+
+  .setup-title {
+    font-size: 25px;
+  }
 }
 
 /* Keyframe animations */
