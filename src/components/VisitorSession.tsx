@@ -22,7 +22,7 @@ import Visualizer from './Visualizer';
 import { GlassSelect } from './GlassSelect';
 
 const MIN_JITTER_BUFFER_SECONDS = 0.035;
-const MAX_QUEUED_AUDIO_SECONDS = 0.35;
+const MAX_QUEUED_AUDIO_SECONDS = 15.0;
 const RECONNECT_MAX_DELAY_MS = 10_000;
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const HEARTBEAT_TIMEOUT_MS = 35_000;
