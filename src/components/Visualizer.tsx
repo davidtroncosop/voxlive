@@ -4,18 +4,20 @@ interface VisualizerProps {
   isActive: boolean;
   color?: 'primary' | 'secondary';
   barCount?: number;
+  audioLevel?: number; // 0 to 100
 }
 
 export const Visualizer: React.FC<VisualizerProps> = ({ 
   isActive, 
   color = 'primary', 
-  barCount = 15 
+  barCount = 19,
+  audioLevel
 }) => {
-  const [heights, setHeights] = useState<number[]>(Array(barCount).fill(10));
+  const [heights, setHeights] = useState<number[]>(Array(barCount).fill(8));
 
   useEffect(() => {
     if (!isActive) {
-      setHeights(Array(barCount).fill(8));
+      setHeights(Array(barCount).fill(6));
       return;
     }
 
@@ -24,15 +26,26 @@ export const Visualizer: React.FC<VisualizerProps> = ({
         Array.from({ length: barCount }, (_, i) => {
           const normalized = i / (barCount - 1); // 0 to 1
           const envelope = Math.sin(normalized * Math.PI); // 0 -> 1 -> 0 bell curve
-          const baseHeight = 8;
-          const dynamicBoost = (Math.random() * 0.7 + 0.3) * 58 * envelope;
-          return Math.round(baseHeight + dynamicBoost);
+          const baseHeight = 6;
+          
+          let dynamicBoost = 0;
+          if (typeof audioLevel === 'number' && audioLevel > 0) {
+            // Reacciona al nivel real de dB / volumen del micrófono
+            const scaled = Math.min(100, Math.max(0, audioLevel)) / 100;
+            const variance = (Math.random() * 0.4 + 0.8);
+            dynamicBoost = scaled * 62 * envelope * variance;
+          } else {
+            // Fluctuación fluida orgánica de audio
+            dynamicBoost = (Math.random() * 0.6 + 0.4) * 52 * envelope;
+          }
+
+          return Math.max(6, Math.round(baseHeight + dynamicBoost));
         })
       );
-    }, 85);
+    }, 60);
 
     return () => clearInterval(interval);
-  }, [isActive, barCount]);
+  }, [isActive, barCount, audioLevel]);
 
   return (
     <div className="visualizer-container">
@@ -43,10 +56,12 @@ export const Visualizer: React.FC<VisualizerProps> = ({
           style={{
             height: `${height}px`,
             background: color === 'primary' 
-              ? 'linear-gradient(to top, var(--color-primary), var(--color-primary-glow))' 
-              : 'linear-gradient(to top, var(--color-secondary), var(--color-secondary-glow))',
-            transition: 'height 0.1s cubic-bezier(0.4, 0, 0.2, 1)',
-            opacity: isActive ? 0.9 : 0.3
+              ? 'linear-gradient(to top, var(--blue), var(--blue-vibrant))' 
+              : 'linear-gradient(to top, var(--blue-dark), var(--blue-vibrant))',
+            boxShadow: isActive ? '0 0 10px rgba(56, 189, 248, 0.4)' : 'none',
+            borderRadius: 0,
+            transition: 'height 0.06s cubic-bezier(0.2, 0, 0.2, 1)',
+            opacity: isActive ? 0.95 : 0.25
           }}
         />
       ))}

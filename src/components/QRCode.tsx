@@ -52,7 +52,7 @@ export const QRCode: React.FC<QRCodeProps> = ({
           alignItems: 'center', 
           justifyContent: 'center',
           background: bgColor,
-          borderRadius: '8px',
+          borderRadius: 0,
           color: '#666',
           fontSize: '12px'
         }}
@@ -72,7 +72,7 @@ export const QRCode: React.FC<QRCodeProps> = ({
       style={{
         width: size,
         height: size,
-        borderRadius: '8px',
+        borderRadius: 0,
         display: 'block',
         background: bgColor,
       }}

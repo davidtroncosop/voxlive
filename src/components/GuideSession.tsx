@@ -14,7 +14,8 @@ import {
   Trash2, 
   Wifi, 
   Cpu,
-  Square 
+  Square,
+  Tv 
 } from 'lucide-react';
 import { SUPPORTED_LANGUAGES } from '../types';
 import type { ConnectionStatus, CustomGlossaryTerm, NetworkQuality } from '../types';
@@ -59,11 +60,24 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
   const [showQrModal, setShowQrModal] = useState<boolean>(false);
   const [isProjectorMode, setIsProjectorMode] = useState<boolean>(false);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
+  const [fontSizeMode, setFontSizeMode] = useState<'normal' | 'large' | 'xlarge'>('normal');
 
   // Custom glossary
   const [glossaryTerms, setGlossaryTerms] = useState<CustomGlossaryTerm[]>([]);
   const [newTermCanonical, setNewTermCanonical] = useState<string>('');
   const [showGlossaryModal, setShowGlossaryModal] = useState<boolean>(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (isProjectorMode) setIsProjectorMode(false);
+        if (showQrModal) setShowQrModal(false);
+        if (showGlossaryModal) setShowGlossaryModal(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isProjectorMode, showQrModal, showGlossaryModal]);
 
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -543,7 +557,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
                   <Mic size={24} style={{ color: isRecording ? '#ef4444' : 'var(--blue)' }} />
                   Panel de Transmisión
                 </div>
-                <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                   <div className="room-code-plain">
                     Sala: <span className="room-code-value">{roomCode}</span>
                   </div>
@@ -554,6 +568,15 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
                     style={{ height: '36px', padding: '0 14px', fontSize: '12px' }}
                   >
                     <QrCode size={14} /> <span>Compartir QR</span>
+                  </button>
+                  <button 
+                    type="button"
+                    className="btn--action-secondary" 
+                    onClick={() => setIsProjectorMode(true)}
+                    style={{ height: '36px', padding: '0 14px', fontSize: '12px' }}
+                    title="Abrir en pantalla completa para proyectores o auditorios"
+                  >
+                    <Tv size={14} /> <span>Modo Escenario</span>
                   </button>
                 </div>
               </div>
@@ -570,6 +593,11 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
                   className={`action-mic-btn ${isRecording ? 'active' : 'inactive'}`}
                   onClick={toggleRecording}
                   aria-label={isRecording ? 'Detener transmisión de voz' : 'Iniciar transmisión de voz'}
+                  style={isRecording ? {
+                    boxShadow: `0 0 ${20 + Math.round(dbLevel * 0.45)}px rgba(239, 68, 68, ${0.55 + dbLevel * 0.004})`,
+                    transform: `scale(${1 + (dbLevel * 0.0008)})`,
+                    transition: 'transform 0.06s ease-out, box-shadow 0.06s ease-out'
+                  } : undefined}
                 >
                   {isRecording ? <MicOff size={42} /> : <Mic size={42} />}
                 </button>
@@ -605,19 +633,47 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
                   </div>
                 )}
 
-                <Visualizer isActive={isRecording} color="primary" />
+                <Visualizer isActive={isRecording} audioLevel={dbLevel} color="primary" />
               </div>
             </div>
 
-            <div className="transcript-card">
+            <div className={`transcript-card size-${fontSizeMode}`}>
               <div className="transcript-header">
                 <div className="transcript-header-title">
                   <Sparkles size={18} style={{ color: 'var(--blue-vibrant)' }} />
                   Transcripción de tu Voz (En Tiempo Real)
                 </div>
-                <span className="badge-live">
-                  <span className="pulse-dot"></span> LIVE
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div className="font-size-switcher">
+                    <button 
+                      type="button" 
+                      className={`font-size-btn ${fontSizeMode === 'normal' ? 'active' : ''}`}
+                      onClick={() => setFontSizeMode('normal')}
+                      title="Tamaño normal"
+                    >
+                      A
+                    </button>
+                    <button 
+                      type="button" 
+                      className={`font-size-btn ${fontSizeMode === 'large' ? 'active' : ''}`}
+                      onClick={() => setFontSizeMode('large')}
+                      title="Tamaño grande"
+                    >
+                      A+
+                    </button>
+                    <button 
+                      type="button" 
+                      className={`font-size-btn ${fontSizeMode === 'xlarge' ? 'active' : ''}`}
+                      onClick={() => setFontSizeMode('xlarge')}
+                      title="Tamaño extra grande"
+                    >
+                      A++
+                    </button>
+                  </div>
+                  <span className="badge-live">
+                    <span className="pulse-dot"></span> LIVE
+                  </span>
+                </div>
               </div>
               <div className="transcript-body">
                 {transcripts.length === 0 ? (
@@ -768,110 +824,182 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
         </div>
       )}
 
-      {/* QR Modal with Projector Mode */}
-      {showQrModal && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: isProjectorMode ? '#080a10' : 'rgba(0, 0, 0, 0.85)',
-          backdropFilter: isProjectorMode ? 'none' : 'blur(8px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000,
-          padding: isProjectorMode ? '32px 20px' : '20px'
-        }}>
-          <div className="glass-card" style={{ 
-            maxWidth: isProjectorMode ? '680px' : '420px', 
-            width: '100%', 
-            textAlign: 'center', 
-            padding: isProjectorMode ? '40px 32px' : '32px',
-            boxShadow: isProjectorMode ? '0 0 80px rgba(6, 182, 212, 0.2)' : undefined,
-            border: isProjectorMode ? '1px solid rgba(6, 182, 212, 0.4)' : undefined
-          }}>
-            {isProjectorMode ? (
-              <>
-                <div style={{ 
-                  display: 'inline-flex', 
-                  alignItems: 'center', 
-                  gap: '8px', 
-                  padding: '6px 14px', 
-                  background: 'rgba(6, 182, 212, 0.12)', 
-                  borderRadius: '20px', 
-                  color: 'var(--color-secondary)', 
-                  fontSize: '13px', 
-                  fontWeight: 600, 
-                  marginBottom: '16px' 
-                }}>
-                  <Sparkles size={16} /> Modo Proyector para Auditorio
-                </div>
-                <h2 style={{ fontFamily: 'var(--font-heading)', fontSize: '28px', fontWeight: 700, marginBottom: '6px', color: '#ffffff' }}>
-                  Traducción en Vivo del Evento
-                </h2>
-                <p style={{ color: 'var(--color-text-secondary)', fontSize: '15px', marginBottom: '24px', maxWidth: '520px', margin: '0 auto 24px auto' }}>
-                  Conéctate a la red Wi-Fi del auditorio y escanea con tu móvil para escuchar la traducción simultánea en tu idioma.
-                </p>
+      {/* QR Modal (Quick Share) */}
+      {showQrModal && !isProjectorMode && (
+        <div className="modal-overlay" onClick={() => setShowQrModal(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+            <div className="modal-header">
+              <div>
+                <h3 className="modal-title">Acceso para Oyentes</h3>
+                <p className="modal-subtitle">Escanea para escuchar la traducción simultánea</p>
+              </div>
+              <button 
+                type="button" 
+                className="modal-close-btn"
+                onClick={() => setShowQrModal(false)}
+                aria-label="Cerrar"
+              >
+                &times;
+              </button>
+            </div>
 
-                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '20px' }}>
-                  <div style={{ background: '#ffffff', padding: '20px', borderRadius: '20px', boxShadow: '0 12px 48px rgba(0,0,0,0.6)' }}>
-                    <QRCode value={getInviteUrl()} size={280} fgColor="#000000" bgColor="#ffffff" />
-                  </div>
-                </div>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', margin: '8px 0 20px 0' }}>
+              <div style={{ background: '#ffffff', padding: '14px', borderRadius: 0, boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
+                <QRCode value={getInviteUrl()} size={240} fgColor="#000000" bgColor="#ffffff" />
+              </div>
 
-                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '16px', marginBottom: '24px', flexWrap: 'wrap' }}>
-                  <div style={{ background: 'rgba(255, 255, 255, 0.06)', padding: '10px 18px', borderRadius: '10px', fontSize: '15px' }}>
-                    Código de sala: <strong style={{ color: 'var(--color-secondary)', fontSize: '22px', letterSpacing: '3px' }}>{roomCode}</strong>
-                  </div>
-                  <div style={{ background: 'rgba(255, 255, 255, 0.06)', padding: '10px 18px', borderRadius: '10px', fontSize: '14px', color: 'var(--color-text-secondary)' }}>
-                    🎧 Conecta tus auriculares
-                  </div>
+              <div style={{ width: '100%', background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.1)', padding: '10px', textAlign: 'center' }}>
+                <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)', letterSpacing: '1px' }}>CÓDIGO DE SALA</div>
+                <div style={{ fontFamily: '"SF Mono", monospace', fontSize: '24px', fontWeight: 700, color: 'var(--blue-vibrant)', letterSpacing: '3px' }}>
+                  {roomCode}
                 </div>
+              </div>
 
-                <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', maxWidth: '360px', margin: '0 auto' }}>
-                  <button className="btn btn-secondary" onClick={() => setIsProjectorMode(false)} style={{ flex: 1 }}>
-                    Vista Normal
-                  </button>
-                  <button className="btn btn-primary" onClick={() => { setIsProjectorMode(false); setShowQrModal(false); }} style={{ flex: 1 }}>
-                    Cerrar
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '24px', marginBottom: '8px' }}>
-                  Escanea para Unirte
-                </h3>
-                <p style={{ color: 'var(--color-text-secondary)', fontSize: '14px', marginBottom: '24px' }}>
-                  Sala: <strong style={{ color: 'var(--color-secondary)', fontSize: '18px' }}>{roomCode}</strong>
-                </p>
+              <div style={{ wordBreak: 'break-all', fontSize: '12px', color: 'rgba(255,255,255,0.7)', background: 'rgba(255,255,255,0.04)', padding: '8px 12px', border: '1px solid rgba(255,255,255,0.08)', width: '100%', textAlign: 'center' }}>
+                {getInviteUrl()}
+              </div>
+            </div>
 
-                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
-                  <div style={{ background: '#ffffff', padding: '16px', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
-                    <QRCode value={getInviteUrl()} size={240} fgColor="#000000" bgColor="#ffffff" />
-                  </div>
-                </div>
+            <div className="modal-actions">
+              <button 
+                type="button" 
+                className="btn btn--nav modal-btn"
+                onClick={copyInviteLink}
+              >
+                <span className="btn__label">{copiedLink ? '¡Enlace Copiado!' : 'Copiar Enlace'}</span>
+                <span className="btn__icon">
+                  {copiedLink ? <Check size={16} /> : <Copy size={16} />}
+                </span>
+              </button>
+              <button 
+                type="button" 
+                className="btn btn--ghost modal-btn"
+                onClick={() => {
+                  setShowQrModal(false);
+                  setIsProjectorMode(true);
+                }}
+              >
+                <span className="btn__label">Abrir Modo Escenario</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
-                <div style={{ wordBreak: 'break-all', fontSize: '12px', color: 'var(--color-secondary)', marginBottom: '20px', background: 'rgba(255,255,255,0.04)', padding: '8px 12px', borderRadius: '8px' }}>
-                  {getInviteUrl()}
-                </div>
+      {/* Full-screen Stage / Projector Mode for Auditoriums */}
+      {isProjectorMode && (
+        <div className="projector-overlay">
+          <header className="projector-header">
+            <div className="projector-header-left">
+              <div className="projector-logo">
+                <svg className="logo__svg" viewBox="0 0 42 34" fill="currentColor" style={{ width: '28px', height: '22px' }}>
+                  <polygon points="12,0 30,0 33.2,3.2 15.2,3.2" />
+                  <polygon points="14.6,5.6 32.6,5.6 35.8,8.8 17.8,8.8" />
+                  <polygon points="17.2,11.2 35.2,11.2 38.4,14.4 20.4,14.4" />
+                  <polygon points="3.2,16.8 21.2,16.8 24.4,20 6.4,20" />
+                  <polygon points="5.8,22.4 23.8,22.4 27,25.6 9,25.6" />
+                  <polygon points="8.4,28 26.4,28 29.6,31.2 11.6,31.2" />
+                </svg>
+                <span>Voxlive Stage</span>
+              </div>
+              <div className="projector-badge-live">
+                <span className="pulse-dot"></span> EN VIVO
+              </div>
+              <div className="projector-stat">
+                <Users size={15} style={{ color: 'var(--blue-vibrant)' }} />
+                <span><strong>{activeListeners}</strong> oyentes en sala</span>
+              </div>
+            </div>
 
-                <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-                  <button className="btn btn-secondary" onClick={copyInviteLink} style={{ flex: 1 }}>
-                    {copiedLink ? <Check size={16} /> : <Copy size={16} />}
-                    {copiedLink ? '¡Copiado!' : 'Copiar Enlace'}
-                  </button>
-                  <button className="btn btn-secondary" onClick={() => setIsProjectorMode(true)} style={{ flex: 1 }}>
-                    <Sparkles size={16} /> Modo Proyector
-                  </button>
-                </div>
-                <button className="btn btn-primary" onClick={() => setShowQrModal(false)} style={{ width: '100%' }}>
-                  Cerrar
+            <div className="projector-header-right">
+              <div className="font-size-switcher">
+                <button 
+                  type="button" 
+                  className={`font-size-btn ${fontSizeMode === 'normal' ? 'active' : ''}`}
+                  onClick={() => setFontSizeMode('normal')}
+                  title="Tamaño normal"
+                >
+                  A
                 </button>
-              </>
-            )}
+                <button 
+                  type="button" 
+                  className={`font-size-btn ${fontSizeMode === 'large' ? 'active' : ''}`}
+                  onClick={() => setFontSizeMode('large')}
+                  title="Tamaño grande"
+                >
+                  A+
+                </button>
+                <button 
+                  type="button" 
+                  className={`font-size-btn ${fontSizeMode === 'xlarge' ? 'active' : ''}`}
+                  onClick={() => setFontSizeMode('xlarge')}
+                  title="Tamaño extra grande"
+                >
+                  A++
+                </button>
+              </div>
+              <button 
+                type="button"
+                className="btn btn--ghost projector-exit-btn"
+                onClick={() => setIsProjectorMode(false)}
+              >
+                <span>&times; Salir del Modo Escenario [Esc]</span>
+              </button>
+            </div>
+          </header>
+
+          <div className="projector-stage-grid">
+            <div className="projector-qr-panel">
+              <div className="projector-qr-card">
+                <div className="projector-qr-tag">ESCANEA CON TU MÓVIL</div>
+                <div className="projector-qr-frame">
+                  <QRCode value={getInviteUrl()} size={240} fgColor="#000000" bgColor="#ffffff" />
+                </div>
+                <div className="projector-room-code-box">
+                  <span className="projector-room-label">CÓDIGO DE SALA</span>
+                  <span className="projector-room-num">{roomCode}</span>
+                </div>
+                <div className="projector-instructions">
+                  <div className="projector-instruction-step">
+                    <span className="step-num">1</span>
+                    <span>Apunta con la cámara de tu teléfono al código QR</span>
+                  </div>
+                  <div className="projector-instruction-step">
+                    <span className="step-num">2</span>
+                    <span>Selecciona tu idioma preferido para escuchar</span>
+                  </div>
+                  <div className="projector-instruction-step">
+                    <span className="step-num">3</span>
+                    <span>Conecta tus auriculares para traducción simultánea</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="projector-transcripts-panel">
+              <div className="projector-transcripts-header">
+                <Sparkles size={18} style={{ color: 'var(--blue-vibrant)' }} />
+                <span>Subtítulos en Tiempo Real</span>
+                <span className="projector-lang-pill">
+                  {SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.name}
+                </span>
+              </div>
+              <div className={`projector-transcripts-stream size-${fontSizeMode}`}>
+                {transcripts.length === 0 ? (
+                  <div className="projector-empty-stream">
+                    <Mic size={44} style={{ color: 'var(--blue-vibrant)' }} />
+                    <p>Esperando que hables para proyectar subtítulos en pantalla gigante...</p>
+                  </div>
+                ) : (
+                  transcripts.map((t) => (
+                    <div key={t.id} className="projector-subtitle-bubble">
+                      <span className="projector-bubble-time">{t.timestamp}</span>
+                      <p className="projector-bubble-text">{t.text}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}

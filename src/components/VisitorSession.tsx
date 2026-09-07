@@ -58,6 +58,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
   const [reconnectAttempt, setReconnectAttempt] = useState<number>(0);
   const [networkQuality, setNetworkQuality] = useState<NetworkQuality>({ rttMs: null, status: 'unknown' });
   const [droppedFrames, setDroppedFrames] = useState<number>(0);
+  const [fontSizeMode, setFontSizeMode] = useState<'normal' | 'large' | 'xlarge'>('normal');
 
   const wsRef = useRef<WebSocket | null>(null);
   const isListeningRef = useRef<boolean>(false);
@@ -610,8 +611,8 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
           <div>
             <div className="glass-card" style={{ marginBottom: '32px' }}>
               <div className="panel-header">
-                <div className="panel-title" style={{ color: 'var(--color-secondary)' }}>
-                  <Headphones size={24} />
+                <div className="panel-title">
+                  <Headphones size={24} style={{ color: 'var(--blue)' }} />
                   Panel de Escucha
                 </div>
                 <div className="room-code-plain">
@@ -626,81 +627,46 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                 </div>
               )}
 
-              {/* High-Scale Mode Switcher (Audio vs Subtitles-Only) */}
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: '8px',
-                background: 'rgba(255, 255, 255, 0.04)',
-                padding: '4px',
-                borderRadius: '12px',
-                marginBottom: '20px'
-              }}>
+              {/* Sharp High-Scale Mode Switcher (Audio vs Subtitles-Only) */}
+              <div className="mode-tabs-container">
                 <button
                   type="button"
                   onClick={() => handleModeChange('audio')}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '6px',
-                    padding: '10px 14px',
-                    borderRadius: '8px',
-                    border: 'none',
-                    background: audioMode === 'audio' ? 'var(--color-secondary)' : 'transparent',
-                    color: audioMode === 'audio' ? '#000000' : 'var(--color-text-secondary)',
-                    fontWeight: 600,
-                    fontSize: '13px',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s ease'
-                  }}
+                  className={`mode-tab-btn ${audioMode === 'audio' ? 'active' : ''}`}
                 >
-                  <Headphones size={16} /> Audio en Vivo (HD)
+                  <Headphones size={15} /> Audio en Vivo (HD)
                 </button>
                 <button
                   type="button"
                   onClick={() => handleModeChange('subtitles')}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '6px',
-                    padding: '10px 14px',
-                    borderRadius: '8px',
-                    border: 'none',
-                    background: audioMode === 'subtitles' ? 'var(--color-secondary)' : 'transparent',
-                    color: audioMode === 'subtitles' ? '#000000' : 'var(--color-text-secondary)',
-                    fontWeight: 600,
-                    fontSize: '13px',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s ease'
-                  }}
+                  className={`mode-tab-btn ${audioMode === 'subtitles' ? 'active' : ''}`}
                 >
-                  <Globe size={16} /> Solo Subtítulos (Ahorro)
+                  <Globe size={15} /> Solo Subtítulos (0 kbps)
                 </button>
               </div>
 
-              <div className="action-box" style={{ background: 'rgba(6, 182, 212, 0.03)', border: '1px solid rgba(6, 182, 212, 0.15)' }}>
+              <div className="action-box">
                 {audioMode === 'subtitles' ? (
                   <div style={{ padding: '24px 16px', textAlign: 'center' }}>
                     <div style={{
-                      width: '64px',
-                      height: '64px',
-                      borderRadius: '50%',
-                      background: 'rgba(6, 182, 212, 0.12)',
-                      color: 'var(--color-secondary)',
+                      width: '56px',
+                      height: '56px',
+                      borderRadius: 0,
+                      background: 'rgba(0, 108, 210, 0.15)',
+                      border: '1px solid rgba(56, 189, 248, 0.3)',
+                      color: 'var(--blue-vibrant)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
                       margin: '0 auto 16px auto'
                     }}>
-                      <Globe size={32} />
+                      <Globe size={28} />
                     </div>
-                    <h4 style={{ fontSize: '17px', fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: '6px' }}>
+                    <h4 style={{ fontSize: '16px', fontWeight: 600, color: '#ffffff', marginBottom: '6px' }}>
                       Modo Solo Subtítulos Activo
                     </h4>
-                    <p style={{ color: 'var(--color-text-secondary)', fontSize: '13px', maxWidth: '420px', margin: '0 auto', lineHeight: '1.5' }}>
-                      Estás recibiendo la traducción escrita en tiempo real con <strong>0 kbps</strong> de consumo de audio. Ideal para salas congestionadas o si no tienes auriculares.
+                    <p style={{ color: 'rgba(255, 255, 255, 0.75)', fontSize: '13px', maxWidth: '420px', margin: '0 auto', lineHeight: '1.5' }}>
+                      Estás recibiendo la traducción escrita en tiempo real con <strong>0 kbps</strong> de consumo de audio. Ideal para salas con baja cobertura o si no tienes auriculares.
                     </p>
                   </div>
                 ) : (
@@ -711,12 +677,12 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                           <div className="wave-circle"></div>
                           <div className="wave-circle"></div>
                           <div className="wave-circle"></div>
-                          <div className="wave-center">
+                          <div className="wave-center" style={{ borderRadius: 0 }}>
                             <Volume2 size={32} />
                           </div>
                         </>
                       ) : (
-                        <div className="wave-center" style={{ background: 'var(--color-text-muted)', boxShadow: 'none' }}>
+                        <div className="wave-center" style={{ background: 'var(--color-text-muted)', boxShadow: 'none', borderRadius: 0 }}>
                           <VolumeX size={32} />
                         </div>
                       )}
@@ -727,7 +693,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                         'Reconectando...'
                       ) : isListening ? (
                         <>
-                          <span className="pulse-dot" style={{ backgroundColor: 'var(--color-secondary)' }}></span>
+                          <span className="pulse-dot" style={{ backgroundColor: 'var(--blue-vibrant)' }}></span>
                           Escuchando traducción
                         </>
                       ) : (
@@ -735,7 +701,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                       )}
                     </div>
 
-                    <p style={{ color: 'var(--color-text-secondary)', fontSize: '14px', maxWidth: '360px', marginTop: '-8px' }}>
+                    <p style={{ color: 'rgba(255, 255, 255, 0.75)', fontSize: '14px', maxWidth: '360px', marginTop: '-8px' }}>
                       {status === 'connecting'
                         ? 'Conservaremos tu sesión y el audio continuará automáticamente.'
                         : isListening
@@ -743,11 +709,12 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                         : 'Activa la audición para empezar a reproducir la traducción.'}
                     </p>
 
-                    {/* Volume bar */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', width: '100%', maxWidth: '260px', marginTop: '12px' }}>
+                    {/* Sharp Volume bar */}
+                    <div className="volume-control-box">
                       <button 
                         onClick={() => setIsMuted(!isMuted)} 
-                        style={{ background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
+                        style={{ background: 'none', border: 'none', color: 'rgba(255, 255, 255, 0.75)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                        aria-label={isMuted ? 'Activar sonido' : 'Silenciar'}
                       >
                         {isMuted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
                       </button>
@@ -760,17 +727,10 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                           setVolume(Number(e.target.value));
                           if (isMuted) setIsMuted(false);
                         }}
-                        style={{
-                          flex: 1,
-                          accentColor: 'var(--color-secondary)',
-                          height: '4px',
-                          borderRadius: 'var(--radius-full)',
-                          background: 'rgba(255, 255, 255, 0.1)',
-                          cursor: 'pointer'
-                        }}
+                        className="volume-slider-sharp"
                       />
-                      <span style={{ fontSize: '12px', width: '30px', textAlign: 'right', color: 'var(--color-text-secondary)' }}>
-                        {isMuted ? '0' : volume}%
+                      <span style={{ fontSize: '12px', width: '32px', textAlign: 'right', color: 'rgba(255, 255, 255, 0.75)', fontFamily: '"SF Mono", monospace' }}>
+                        {isMuted ? '0%' : `${volume}%`}
                       </span>
                     </div>
 
@@ -780,18 +740,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
               </div>
 
               {/* Battery & Background Audio Advice */}
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                background: 'rgba(16, 185, 129, 0.08)',
-                border: '1px solid rgba(16, 185, 129, 0.2)',
-                borderRadius: '8px',
-                padding: '10px 14px',
-                fontSize: '12px',
-                color: 'var(--color-text-secondary)',
-                marginTop: '16px'
-              }}>
+              <div className="advice-box-sharp">
                 <CheckCircle2 size={16} color="var(--color-success)" style={{ flexShrink: 0 }} />
                 <span>
                   Puedes apagar la pantalla o cambiar de aplicación; el audio continuará sonando en segundo plano en tus auriculares.
@@ -800,22 +749,10 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
 
               {/* Unstable Wi-Fi Suggestion */}
               {(networkQuality.status === 'poor' || droppedFrames > 5) && audioMode === 'audio' && (
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: '10px',
-                  background: 'rgba(234, 179, 8, 0.1)',
-                  border: '1px solid rgba(234, 179, 8, 0.3)',
-                  borderRadius: '8px',
-                  padding: '10px 14px',
-                  fontSize: '12px',
-                  color: '#facc15',
-                  marginTop: '12px'
-                }}>
-                  <span>⚠️ Wi-Fi congestionada detectada. ¿Deseas activar Solo Subtítulos?</span>
+                <div className="warning-box-sharp">
+                  <span>⚠️ Red Wi-Fi congestionada detectada. ¿Deseas activar Solo Subtítulos?</span>
                   <button 
-                    className="btn btn-secondary" 
+                    className="btn btn--action-secondary" 
                     style={{ padding: '4px 10px', fontSize: '11px', whiteSpace: 'nowrap' }}
                     onClick={() => handleModeChange('subtitles')}
                   >
@@ -825,15 +762,43 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
               )}
             </div>
 
-            <div className="transcript-card">
-              <div className="transcript-header" style={{ borderBottom: '1px solid rgba(6, 182, 212, 0.1)' }}>
-                <div className="transcript-header-title" style={{ color: 'var(--color-secondary)' }}>
-                  <Globe size={18} />
+            <div className={`transcript-card size-${fontSizeMode}`}>
+              <div className="transcript-header">
+                <div className="transcript-header-title">
+                  <Globe size={18} style={{ color: 'var(--blue-vibrant)' }} />
                   Transcripción y Traducción
                 </div>
-                <span className={`badge ${status === 'connected' ? 'badge-connected' : 'badge-live'}`}>
-                  {status === 'connected' ? 'Conectado' : 'Reconectando'}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div className="font-size-switcher">
+                    <button 
+                      type="button" 
+                      className={`font-size-btn ${fontSizeMode === 'normal' ? 'active' : ''}`}
+                      onClick={() => setFontSizeMode('normal')}
+                      title="Tamaño normal"
+                    >
+                      A
+                    </button>
+                    <button 
+                      type="button" 
+                      className={`font-size-btn ${fontSizeMode === 'large' ? 'active' : ''}`}
+                      onClick={() => setFontSizeMode('large')}
+                      title="Tamaño grande"
+                    >
+                      A+
+                    </button>
+                    <button 
+                      type="button" 
+                      className={`font-size-btn ${fontSizeMode === 'xlarge' ? 'active' : ''}`}
+                      onClick={() => setFontSizeMode('xlarge')}
+                      title="Tamaño extra grande"
+                    >
+                      A++
+                    </button>
+                  </div>
+                  <span className={`badge ${status === 'connected' ? 'badge-connected' : 'badge-live'}`}>
+                    {status === 'connected' ? 'Conectado' : 'Reconectando'}
+                  </span>
+                </div>
               </div>
               <div className="transcript-body">
                 {transcripts.length === 0 ? (
@@ -988,6 +953,54 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                 </p>
               </div>
             </div>
+          </div>
+
+          {/* Mobile Bottom Floating Dock (Thumb Ergonomics) */}
+          <div className="mobile-bottom-dock">
+            <button
+              type="button"
+              className={`mobile-dock-btn ${isListening ? 'mobile-dock-btn--primary' : ''}`}
+              onClick={() => {
+                if (audioMode === 'subtitles') {
+                  handleModeChange('audio');
+                } else {
+                  setIsListening(!isListening);
+                }
+              }}
+            >
+              {audioMode === 'subtitles' ? (
+                <>
+                  <Headphones size={16} /> <span>Activar Voz</span>
+                </>
+              ) : isListening ? (
+                <>
+                  <Square size={14} fill="currentColor" /> <span>Pausar Audio</span>
+                </>
+              ) : (
+                <>
+                  <Play size={14} fill="currentColor" /> <span>Escuchar Audio</span>
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              className="mobile-dock-btn"
+              onClick={() => handleModeChange(audioMode === 'audio' ? 'subtitles' : 'audio')}
+              title="Cambiar entre Audio HD y Solo Subtítulos"
+            >
+              {audioMode === 'audio' ? <Globe size={16} /> : <Headphones size={16} />}
+              <span>{audioMode === 'audio' ? 'Subtítulos' : 'Audio HD'}</span>
+            </button>
+
+            <button
+              type="button"
+              className="mobile-dock-btn"
+              onClick={() => setIsMuted(!isMuted)}
+              title={isMuted ? 'Desmutear' : 'Silenciar'}
+            >
+              {isMuted || volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
+            </button>
           </div>
         </div>
       )}
