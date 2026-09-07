@@ -30,6 +30,7 @@ import { GlassSelect } from './GlassSelect';
 interface GuideSessionProps {
   onBack: () => void;
   wsUrl: string;
+  initialRoomCode?: string;
 }
 
 function generateCleanRoomCode(): string {
@@ -41,10 +42,16 @@ function generateCleanRoomCode(): string {
   return code;
 }
 
-export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => {
+export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl, initialRoomCode }) => {
   const [status, setStatus] = useState<ConnectionStatus>('idle');
   const [hasStarted, setHasStarted] = useState<boolean>(false);
-  const [roomCode, setRoomCode] = useState<string>('');
+  const [roomCode, setRoomCode] = useState<string>(() => {
+    if (initialRoomCode) return initialRoomCode.trim().toUpperCase();
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('voxlive_guide_room_code') || '';
+    }
+    return '';
+  });
   const [hostToken, setHostToken] = useState<string>('');
   const [activeListeners, setActiveListeners] = useState<number>(0);
   const [audioListeners, setAudioListeners] = useState<number>(0);
@@ -53,7 +60,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [transcripts, setTranscripts] = useState<{ id: string; text: string; timestamp: string }[]>([]);
   const [providerReady, setProviderReady] = useState<boolean | null>(null);
-  const [selectedLanguage, setSelectedLanguage] = useState<string>('en');
+  const [selectedLanguage, setSelectedLanguage] = useState<string>('es');
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [dbLevel, setDbLevel] = useState<number>(0);
   const [audioMode, setAudioMode] = useState<'worklet' | 'scriptProcessor'>('worklet');
@@ -115,19 +122,23 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
   };
 
   // Create room and initialize WebSocket
+  // Create room or reconnect to existing room and initialize WebSocket
   const startSession = async () => {
     try {
-      const generatedCode = roomCode || generateCleanRoomCode();
-      setRoomCode(generatedCode);
+      const cleanCode = roomCode.trim().toUpperCase() || generateCleanRoomCode();
+      setRoomCode(cleanCode);
+      try {
+        localStorage.setItem('voxlive_guide_room_code', cleanCode);
+      } catch {}
       setHasStarted(true);
       setStatus('connecting');
       setProviderReady(null);
       setErrorMsg('');
 
       const existingToken = hostToken || 
-        sessionStorage.getItem(`hostToken_${generatedCode}`) || 
-        localStorage.getItem(`hostToken_${generatedCode}`) || '';
-      const socketUrl = `${wsUrl}/ws/room/${generatedCode}?role=guide&lang=${selectedLanguage}&audio=binary&hostToken=${encodeURIComponent(existingToken)}`;
+        sessionStorage.getItem(`hostToken_${cleanCode}`) || 
+        localStorage.getItem(`hostToken_${cleanCode}`) || '';
+      const socketUrl = `${wsUrl}/ws/room/${cleanCode}?role=guide&lang=${selectedLanguage}&audio=binary&hostToken=${encodeURIComponent(existingToken)}`;
       const ws = new WebSocket(socketUrl);
       ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
@@ -164,8 +175,8 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
             if (data.hostToken) {
               setHostToken(data.hostToken);
               try {
-                sessionStorage.setItem(`hostToken_${generatedCode}`, data.hostToken);
-                localStorage.setItem(`hostToken_${generatedCode}`, data.hostToken);
+                sessionStorage.setItem(`hostToken_${cleanCode}`, data.hostToken);
+                localStorage.setItem(`hostToken_${cleanCode}`, data.hostToken);
               } catch {}
             }
             if (!ready) {
@@ -202,14 +213,13 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
 
       ws.onclose = (e) => {
         stopPingInterval();
-        if (status !== 'connected') {
-          setHasStarted(false);
-        }
         setStatus('disconnected');
         setIsRecording(false);
         stopAudioRecording();
         if (e.code === 4003) {
           setErrorMsg('La sala ya tiene otro guía activo.');
+        } else {
+          setErrorMsg('Conexión con la sala interrumpida. Puedes reconectarte en cualquier momento.');
         }
       };
 
@@ -230,6 +240,9 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
     }
     stopAudioRecording();
     wakeLockManager.release();
+    try {
+      localStorage.removeItem('voxlive_guide_room_code');
+    } catch {}
     setHasStarted(false);
     setStatus('idle');
     setRoomCode('');
@@ -486,6 +499,26 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
 
             <div className="setup-form-body">
               <div className="form-group">
+                <div className="setup-field-header">
+                  <label className="setup-field-label">
+                    Código de Sala <span className="setup-optional">(Opcional para reanudar)</span>
+                  </label>
+                </div>
+                <input
+                  type="text"
+                  className="setup-text-input setup-room-code-input"
+                  placeholder="EJ. ABCD (Dejar vacío para crear una nueva)"
+                  value={roomCode}
+                  onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
+                  maxLength={10}
+                  disabled={status === 'connecting'}
+                />
+                <p style={{ fontSize: '11px', color: 'rgba(255, 255, 255, 0.55)', margin: '4px 0 0' }}>
+                  Si te desconectaste o cerraste la ventana, ingresa el código anterior para reanudar la transmisión.
+                </p>
+              </div>
+
+              <div className="form-group">
                 <label className="setup-field-label">Tu Idioma de Origen</label>
                 <GlassSelect
                   value={selectedLanguage}
@@ -554,7 +587,11 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
                 disabled={status === 'connecting'}
               >
                 <span className="btn__label">
-                  {status === 'connecting' ? 'Iniciando Sala...' : 'Crear Sala'}
+                  {status === 'connecting'
+                    ? 'Conectando...'
+                    : roomCode.trim()
+                    ? 'Reanudar Sala (Emisor)'
+                    : 'Crear y Transmitir'}
                 </span>
                 <span className="btn__icon">
                   <svg className="arrow-svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
@@ -602,11 +639,28 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
               {status === 'connecting' && (
                 <div className="connection-banner connection-banner--connecting" style={{ marginBottom: '20px' }}>
                   <span className="pulse-dot" style={{ backgroundColor: '#38bdf8', width: 7, height: 7 }}></span>
-                  <span>Iniciando canal seguro en Cloudflare Edge...</span>
+                  <span>Conectando con la sala en Cloudflare Edge...</span>
                 </div>
               )}
 
-              {errorMsg && (
+              {status === 'disconnected' && (
+                <div className="connection-banner" style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <AlertCircle size={16} />
+                    <span>Te has desconectado de la sala <strong>{roomCode}</strong>.</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn--nav"
+                    onClick={startSession}
+                    style={{ height: '32px', padding: '0 14px', fontSize: '12px' }}
+                  >
+                    <span className="btn__label">Reconectar a la Sala</span>
+                  </button>
+                </div>
+              )}
+
+              {errorMsg && status !== 'disconnected' && (
                 <div className="connection-banner" style={{ marginBottom: '20px' }}>
                   <AlertCircle size={16} />
                   <span>{errorMsg}</span>

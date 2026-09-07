@@ -11,6 +11,7 @@ import { TRANSLATION_PROVIDER } from '../../shared/translationProvider';
 export interface Env {
   TOUR_ROOM: DurableObjectNamespace;
   OPENAI_API_KEY?: string;
+  GEMINI_API_KEY?: string;
 }
 
 export interface ConnectionInfo {
@@ -121,26 +122,29 @@ export class TourRoom {
     console.log(`[DO Room] New connection: id=${connId}, role=${role}, lang=${lang}, audio=${audioFormat}`);
 
     if (role === 'guide') {
-      // Guide connection handling with security token & grace period recovery
-      if (this.guideHostSecret && hostToken && hostToken !== this.guideHostSecret) {
+      // Check if another guide is currently actively connected to this room
+      const isGuideActive = Boolean(
+        this.guideSocket && 
+        this.guideSocket.readyState === WebSocket.OPEN && 
+        this.guideSocket !== server
+      );
+
+      // Only reject if there is another guide currently active in the room with different credentials
+      if (isGuideActive && this.guideHostSecret && hostToken && hostToken !== this.guideHostSecret) {
         server.accept();
         try {
           server.send(JSON.stringify({
             type: 'error',
-            message: 'La sala ya tiene un guía activo con credenciales diferentes.',
+            message: 'La sala ya tiene un guía activo en este momento.',
           }));
           server.close(4003, 'Unauthorized guide host token');
         } catch {}
         return;
       }
 
-      if (!this.guideHostSecret) {
-        this.guideHostSecret = hostToken || Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-      }
-
-      // If there was a grace period timer running for a dropped guide, cancel it
+      // If the guide reconnected, cancel any grace period teardown timer
       if (this.guideDisconnectTimer) {
-        console.log('[DO Room] Guide reconnected within grace period. Restoring session seamlessly.');
+        console.log('[DO Room] Guide reconnected. Restoring session seamlessly.');
         clearTimeout(this.guideDisconnectTimer);
         this.guideDisconnectTimer = null;
       }
@@ -153,6 +157,11 @@ export class TourRoom {
 
       this.guideSocket = server;
       this.guideLang = lang;
+      if (hostToken) {
+        this.guideHostSecret = hostToken;
+      } else if (!this.guideHostSecret) {
+        this.guideHostSecret = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+      }
     } else {
       // Visitor reconnect replaces any stale socket matching this clientId
       const existingSockets = this.state.getWebSockets(`client:${clientId}`);
@@ -204,6 +213,19 @@ export class TourRoom {
       // 1. Binary frames (High performance audio uplink from Guide)
       if (message instanceof ArrayBuffer) {
         if (connInfo.role === 'guide') {
+          // Immediately stream guide audio to same-language listeners with zero delay
+          const sameLangSockets = this.state.getWebSockets(`lang:${this.guideLang}`);
+          for (const targetWs of sameLangSockets) {
+            if (targetWs.readyState === WebSocket.OPEN) {
+              const info = targetWs.deserializeAttachment() as ConnectionInfo | null;
+              if (info?.role === 'visitor' && info.audioFormat !== 'none') {
+                try {
+                  targetWs.send(message);
+                } catch {}
+              }
+            }
+          }
+
           try {
             const frame = decodeAudioFrame(message);
             await this.handleGuideAudioBytes(frame.pcmBytes, frame.sampleRate);
@@ -687,37 +709,159 @@ export class TourRoom {
     }
   }
 
-  // Use browser STT only for the guide transcript and same-language listeners
-  async handleGuideText(text: string, isFinal: boolean) {
-    if (!isFinal) return;
-    const normalizedText = this.normalizeProtectedTerms(text);
+  // Fast multi-provider translation supporting Google Gemini 2.0 Flash, OpenAI gpt-4o-mini, and MyMemory fallback
+  async translateText(text: string, sourceLang: string, targetLang: string): Promise<string> {
+    if (!text.trim() || sourceLang === targetLang) return text;
 
+    // 1. Google Gemini 2.0 Flash (~150ms ultra fast)
+    if (this.env.GEMINI_API_KEY) {
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.env.GEMINI_API_KEY}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{
+                parts: [{
+                  text: `You are a professional real-time speech translator for live events. Translate the following spoken transcript from language "${sourceLang}" to language "${targetLang}". Output ONLY the exact translated sentence without explanations, notes, quotation marks, or markdown formatting.\n\nTranscript: ${text}`
+                }]
+              }],
+              generationConfig: {
+                temperature: 0.1,
+                maxOutputTokens: 250,
+              }
+            })
+          }
+        );
+        if (response.ok) {
+          const data = (await response.json()) as any;
+          const translated = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+          if (translated) return translated;
+        }
+      } catch (err) {
+        console.error('[DO Room] Gemini translation failed:', err);
+      }
+    }
+
+    // 2. OpenAI gpt-4o-mini (~250ms fast fallback)
+    if (this.env.OPENAI_API_KEY) {
+      try {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.env.OPENAI_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            messages: [
+              {
+                role: 'system',
+                content: `You are a real-time speech interpreter. Translate directly from ${sourceLang} to ${targetLang}. Return ONLY the translated sentence with no extra quotes or commentary.`
+              },
+              { role: 'user', content: text }
+            ],
+            temperature: 0.1,
+            max_tokens: 250,
+          })
+        });
+        if (response.ok) {
+          const data = (await response.json()) as any;
+          const translated = data?.choices?.[0]?.message?.content?.trim();
+          if (translated) return translated;
+        }
+      } catch (err) {
+        console.error('[DO Room] OpenAI translation failed:', err);
+      }
+    }
+
+    // 3. Free public MyMemory translation fallback
+    try {
+      const response = await fetch(
+        `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${encodeURIComponent(sourceLang)}|${encodeURIComponent(targetLang)}`
+      );
+      if (response.ok) {
+        const data = (await response.json()) as any;
+        const translated = data?.responseData?.translatedText?.trim();
+        if (translated && !translated.includes('MYMEMORY WARNING')) return translated;
+      }
+    } catch {}
+
+    // Default: return original text if all translation backends fail
+    return text;
+  }
+
+  // Handle speech transcript from the guide and distribute to all room listeners
+  async handleGuideText(text: string, isFinal: boolean) {
+    if (!text || !text.trim()) return;
+    const normalizedText = this.normalizeProtectedTerms(text);
+    const transcriptId = Math.random().toString(36).slice(2);
+
+    // 1. Echo transcript back to the guide
     if (this.guideSocket && this.guideSocket.readyState === WebSocket.OPEN) {
       try {
         this.guideSocket.send(JSON.stringify({
           type: 'transcript',
-          text: normalizedText
+          id: transcriptId,
+          text: normalizedText,
+          isFinal
         }));
       } catch {}
     }
 
+    // 2. Broadcast immediately to same-language visitors
     const sameLanguageSockets = this.state.getWebSockets(`lang:${this.guideLang}`);
-    const msg = JSON.stringify({
+    const sameMsg = JSON.stringify({
       type: 'transcript',
-      id: Math.random().toString(),
+      id: transcriptId,
       originalText: normalizedText,
       translatedText: normalizedText,
       languageCode: this.guideLang,
-      isFinal: true,
-      hasAudio: false,
+      isFinal,
+      hasAudio: true, // Guides raw microphone audio is streamed directly
     });
 
     for (const ws of sameLanguageSockets) {
       const info = ws.deserializeAttachment() as ConnectionInfo | null;
       if (info?.role === 'visitor' && ws.readyState === WebSocket.OPEN) {
         try {
-          ws.send(msg);
+          ws.send(sameMsg);
         } catch {}
+      }
+    }
+
+    // 3. For visitors listening in OTHER languages:
+    // Translate final transcripts so they appear and play TTS in the listener's language
+    if (!isFinal) return;
+
+    const allVisitors = this.state.getWebSockets('role:visitor');
+    const otherLanguages = new Set<string>();
+    for (const ws of allVisitors) {
+      const info = ws.deserializeAttachment() as ConnectionInfo | null;
+      if (info?.lang && info.lang !== this.guideLang) {
+        otherLanguages.add(info.lang);
+      }
+    }
+
+    for (const targetLang of otherLanguages) {
+      try {
+        const translatedRaw = await this.translateText(normalizedText, this.guideLang, targetLang);
+        const translatedText = this.normalizeProtectedTerms(translatedRaw);
+
+        const foreignMsg = JSON.stringify({
+          type: 'transcript',
+          id: transcriptId,
+          originalText: normalizedText,
+          translatedText,
+          languageCode: targetLang,
+          isFinal: true,
+          hasAudio: false, // Triggers visitor client SpeechSynthesis TTS in target language
+        });
+
+        this.broadcastToLanguage(targetLang, foreignMsg);
+      } catch (err) {
+        console.error(`[DO Room] Error broadcasting translation to ${targetLang}:`, err);
       }
     }
   }

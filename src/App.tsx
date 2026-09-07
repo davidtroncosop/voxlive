@@ -100,7 +100,11 @@ function App() {
       <main className="session-content">
         <Suspense fallback={<div className="empty-state"><p>Cargando sala...</p></div>}>
           {role === "guide" && (
-            <GuideSession onBack={handleBackToHome} wsUrl={wsUrl} />
+            <GuideSession 
+              onBack={handleBackToHome} 
+              wsUrl={wsUrl} 
+              initialRoomCode={initialRoomCode}
+            />
           )}
           
           {role === "visitor" && (

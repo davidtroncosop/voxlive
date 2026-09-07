@@ -677,7 +677,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                 disabled={status === 'connecting' || roomCodeInput.trim().length < 4}
               >
                 <span className="btn__label">
-                  {status === 'connecting' ? 'Conectando a la Sala...' : 'Unirse a la Sesión'}
+                  {status === 'connecting' ? 'Conectando a la Sala...' : 'Unirse como Oyente'}
                 </span>
                 <span className="btn__icon">
                   <svg className="arrow-svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">

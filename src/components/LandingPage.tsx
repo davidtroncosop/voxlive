@@ -79,7 +79,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSelectRole }) => {
             onSelectRole("guide");
           }}
         >
-          <span className="btn__label">Reservar Demo</span>
+          <span className="btn__label">Crear Sala</span>
           <span className="btn__icon">
             <svg className="arrow-svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
               <path d="M4 10h10.2M10.4 5.6 15.2 10l-4.8 4.4" />
@@ -119,7 +119,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSelectRole }) => {
               onSelectRole("guide");
             }}
           >
-            <span className="btn__label">Reservar Demo</span>
+            <span className="btn__label">Crear Sala</span>
             <span className="btn__icon">
               <svg className="arrow-svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M4 10h10.2M10.4 5.6 15.2 10l-4.8 4.4" />
@@ -157,7 +157,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSelectRole }) => {
               onSelectRole("guide");
             }}
           >
-            <span className="btn__label">Reservar Demo</span>
+            <span className="btn__label">Iniciar como Guía</span>
             <span className="btn__icon">
               <svg className="arrow-svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M4 10h10.2M10.4 5.6 15.2 10l-4.8 4.4" />
@@ -173,7 +173,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSelectRole }) => {
               setShowJoinModal(true);
             }}
           >
-            <span className="btn__label">Ver Voxlive en Acción</span>
+            <span className="btn__label">Unirse como Oyente</span>
           </a>
         </div>
       </main>
@@ -238,7 +238,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSelectRole }) => {
                     onSelectRole("visitor");
                   }}
                 >
-                  <span className="btn__label">Escanear QR o Manual</span>
+                  <span className="btn__label">Ingresar a la Sala</span>
                 </button>
               </div>
             </form>
