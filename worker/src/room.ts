@@ -753,7 +753,7 @@ export class TourRoom {
                 maxOutputTokens: 250,
               }
             }),
-            signal: AbortSignal.timeout(2500)
+            signal: AbortSignal.timeout(5000)
           }
         );
         if (response.ok) {
@@ -789,7 +789,7 @@ export class TourRoom {
             temperature: 0.1,
             max_tokens: 250,
           }),
-          signal: AbortSignal.timeout(2500)
+          signal: AbortSignal.timeout(5000)
         });
         if (response.ok) {
           const data = (await response.json()) as any;
@@ -870,7 +870,7 @@ export class TourRoom {
     }
 
     // 3. For visitors listening in OTHER languages:
-    // When NOT final (interim): broadcast immediately so subtitles appear live in real-time as the guide speaks!
+    // When NOT final (interim): broadcast immediately so live speech indicator appears in real-time as the guide speaks!
     if (!isFinal) {
       for (const { ws, info } of visitorSockets) {
         if (info.lang !== this.guideLang) {
@@ -879,7 +879,7 @@ export class TourRoom {
               type: 'transcript',
               id: transcriptId,
               originalText: normalizedText,
-              translatedText: normalizedText, // Shows live speech progress until finalized
+              translatedText: '', // Kept empty while in progress so English is never shown as translated text
               languageCode: info.lang,
               isFinal: false,
               hasAudio: false,

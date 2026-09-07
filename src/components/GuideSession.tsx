@@ -93,6 +93,19 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isProjectorMode, showQrModal, showGlossaryModal]);
 
+  // Recover speech recognition when tab returns to foreground on mobile devices
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible' && isRecordingRef.current && recognitionRef.current) {
+        try {
+          recognitionRef.current.start();
+        } catch {}
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
+
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const recorderNodeRef = useRef<AudioNode | null>(null);

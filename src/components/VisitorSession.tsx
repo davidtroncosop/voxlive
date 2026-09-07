@@ -1021,7 +1021,16 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                       )}
                       
                       <div className="bubble-text-translated">
-                        {t.translatedText}
+                        {t.translatedText ? (
+                          t.translatedText
+                        ) : !t.isFinal ? (
+                          <span style={{ opacity: 0.7, fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span className="pulse-dot" style={{ width: 6, height: 6, backgroundColor: 'var(--blue)' }} />
+                            Traduciendo al {SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.name}...
+                          </span>
+                        ) : (
+                          t.originalText
+                        )}
                       </div>
                     </div>
                   ))
