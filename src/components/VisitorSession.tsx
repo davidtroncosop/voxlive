@@ -81,39 +81,77 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     clientIdRef.current = crypto.randomUUID?.() || Math.random().toString(36).slice(2);
   }
 
-  // Mobile Audio Unlock Helper
+  // Mobile Audio Unlock Helper: Primes Web Audio, SpeechSynthesis and MediaSession
   const handleUserAudioUnlock = () => {
     try { navigator.vibrate?.(15); } catch {}
+
+    // 1. Resume AudioContext
     if (audioContextRef.current) {
-      audioContextRef.current.resume().then(() => {
+      if (audioContextRef.current.state === 'suspended') {
+        audioContextRef.current.resume().then(() => {
+          setIsAudioSuspended(false);
+        }).catch(() => {});
+      } else {
         setIsAudioSuspended(false);
-      }).catch(() => {});
+      }
+    } else {
+      initAudioContext();
     }
+
+    // 2. Prime SpeechSynthesis synchronously on user gesture (CRUCIAL for iOS Safari & Android)
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.resume();
+        const primeUtterance = new SpeechSynthesisUtterance(' ');
+        primeUtterance.volume = 0.01;
+        window.speechSynthesis.speak(primeUtterance);
+      } catch (err) {
+        console.warn('[Visitor] SpeechSynthesis prime error:', err);
+      }
+    }
+
+    // 3. Keep-alive background audio & MediaSession
     const langInfo = SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguageRef.current);
     backgroundAudioManager.start({
       title: `Traducción (${langInfo?.name || 'En Vivo'})`,
       artist: `Voxlive · Sala ${roomCodeRef.current}`,
       album: 'Audio HD en Vivo',
-      onPlay: () => setIsListening(true),
-      onPause: () => setIsListening(false),
+      onPlay: () => {
+        isListeningRef.current = true;
+        setIsListening(true);
+      },
+      onPause: () => {
+        isListeningRef.current = false;
+        setIsListening(false);
+      },
     });
+
+    isListeningRef.current = true;
     setIsListening(true);
+    setIsAudioSuspended(false);
+
+    // 4. If a translated phrase arrived before user tapped, speak it immediately!
+    if (lastUnspokenTranscriptRef.current) {
+      const textToSpeak = lastUnspokenTranscriptRef.current;
+      lastUnspokenTranscriptRef.current = null;
+      speakText(textToSpeak, selectedLanguageRef.current);
+    }
   };
 
-  // Global one-time tap-to-unlock on mobile if audio is suspended after joining
+  // Global one-time tap-to-unlock: the VERY FIRST touch anywhere on screen immediately unlocks audio
   useEffect(() => {
-    if (hasJoined && isAudioSuspended) {
-      const onTouchUnlock = () => {
-        handleUserAudioUnlock();
-      };
-      window.addEventListener('touchstart', onTouchUnlock, { passive: true, once: true });
-      window.addEventListener('click', onTouchUnlock, { passive: true, once: true });
-      return () => {
-        window.removeEventListener('touchstart', onTouchUnlock);
-        window.removeEventListener('click', onTouchUnlock);
-      };
-    }
-  }, [hasJoined, isAudioSuspended]);
+    if (!hasJoined) return;
+    const onFirstTouch = () => {
+      handleUserAudioUnlock();
+    };
+    window.addEventListener('touchstart', onFirstTouch, { passive: true, once: true });
+    window.addEventListener('click', onFirstTouch, { passive: true, once: true });
+    return () => {
+      window.removeEventListener('touchstart', onFirstTouch);
+      window.removeEventListener('click', onFirstTouch);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasJoined]);
 
   // Mobile Sleep / Screen Lock / Tab-switch Recovery
   useEffect(() => {
@@ -128,6 +166,9 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
           }).catch(() => {
             setIsAudioSuspended(true);
           });
+        }
+        if (typeof window !== 'undefined' && 'speechSynthesis' in window && window.speechSynthesis.paused) {
+          try { window.speechSynthesis.resume(); } catch {}
         }
       }
     };
@@ -226,6 +267,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
   const gainNodeRef = useRef<GainNode | null>(null);
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const spokenPhraseIdsRef = useRef<Set<string>>(new Set());
+  const lastUnspokenTranscriptRef = useRef<string | null>(null);
 
   const stopHeartbeat = () => {
     if (heartbeatTimerRef.current !== null) {
@@ -300,6 +342,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
         resetPlaybackQueue();
         startHeartbeat(ws);
         if (firstConnection && !isReconnect && audioModeRef.current === 'audio') {
+          isListeningRef.current = true;
           setIsListening(true);
         }
         audioContextRef.current?.resume().then(() => {
@@ -377,14 +420,18 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
             });
 
             // TTS playback: Speak ONLY ONCE per final translated phrase
-            if (audioModeRef.current === 'audio' && !data.hasAudio && isListeningRef.current && !isMutedRef.current && newLine.isFinal && newLine.translatedText) {
-              if (!spokenPhraseIdsRef.current.has(newLine.id)) {
-                spokenPhraseIdsRef.current.add(newLine.id);
-                if (spokenPhraseIdsRef.current.size > 100) {
-                  const firstKey = spokenPhraseIdsRef.current.keys().next().value;
-                  if (firstKey) spokenPhraseIdsRef.current.delete(firstKey);
+            if (audioModeRef.current === 'audio' && !data.hasAudio && newLine.isFinal && newLine.translatedText) {
+              lastUnspokenTranscriptRef.current = newLine.translatedText;
+              if (isListeningRef.current && !isMutedRef.current) {
+                if (!spokenPhraseIdsRef.current.has(newLine.id)) {
+                  spokenPhraseIdsRef.current.add(newLine.id);
+                  if (spokenPhraseIdsRef.current.size > 100) {
+                    const firstKey = spokenPhraseIdsRef.current.keys().next().value;
+                    if (firstKey) spokenPhraseIdsRef.current.delete(firstKey);
+                  }
+                  lastUnspokenTranscriptRef.current = null;
+                  speakText(newLine.translatedText, selectedLanguageRef.current);
                 }
-                speakText(newLine.translatedText, selectedLanguageRef.current);
               }
             }
           }
@@ -591,9 +638,14 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
   const speakText = (text: string, langCode: string) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window) || !text.trim()) return;
 
-    // 1. Cancel ANY ongoing speech to guarantee voices NEVER overlap or talk over each other!
+    // 1. Cancel ongoing speech ONLY if actively speaking or pending, to avoid Safari deadlock
     try {
-      window.speechSynthesis.cancel();
+      if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+        window.speechSynthesis.cancel();
+      }
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+      }
     } catch {}
 
     const utterance = new SpeechSynthesisUtterance(text.trim());
@@ -607,17 +659,28 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     utterance.volume = isMutedRef.current ? 0 : volume / 100;
     utterance.rate = 1.05;
 
+    utterance.onend = () => {
+      if ((window as any).__voxliveCurrentUtterance === utterance) {
+        (window as any).__voxliveCurrentUtterance = null;
+      }
+    };
+    utterance.onerror = (e) => {
+      console.warn('[Visitor] Utterance error:', e);
+      if ((window as any).__voxliveCurrentUtterance === utterance) {
+        (window as any).__voxliveCurrentUtterance = null;
+      }
+    };
+
     // Retain global reference to avoid Chrome/Safari garbage-collection bug
     (window as any).__voxliveCurrentUtterance = utterance;
 
-    // 2. Small delay allows audio hardware to cancel the previous buffer cleanly before starting the new utterance
-    window.setTimeout(() => {
-      try {
-        window.speechSynthesis.speak(utterance);
-      } catch (e) {
-        console.warn('[Visitor] SpeechSynthesis speak error:', e);
-      }
-    }, 40);
+    // Speak synchronously to preserve user activation context and avoid iOS audio drops
+    try {
+      window.speechSynthesis.resume();
+      window.speechSynthesis.speak(utterance);
+    } catch (e) {
+      console.warn('[Visitor] SpeechSynthesis speak error:', e);
+    }
   };
 
   useEffect(() => {
@@ -804,7 +867,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
               </div>
 
               <div className="action-box">
-                {isAudioSuspended && audioMode === 'audio' && (
+                {(!isListening || isAudioSuspended) && audioMode === 'audio' && (
                   <div 
                     className="mobile-unmute-banner"
                     onClick={handleUserAudioUnlock}
@@ -815,8 +878,8 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                       <Volume2 size={20} />
                     </div>
                     <div className="mobile-unmute-text">
-                      <strong>Toca para activar audio en vivo</strong>
-                      <span>Pulsa en cualquier parte de la pantalla para empezar a escuchar</span>
+                      <strong>Toca aquí para activar el audio en vivo</strong>
+                      <span>Pulsa en cualquier parte de la pantalla para escuchar la voz traducida</span>
                     </div>
                   </div>
                 )}
@@ -937,6 +1000,14 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                 <CheckCircle2 size={16} color="var(--color-success)" style={{ flexShrink: 0 }} />
                 <span>
                   Puedes apagar la pantalla o cambiar de aplicación; el audio continuará sonando en segundo plano en tus auriculares.
+                </span>
+              </div>
+
+              {/* iPhone Silent Switch Tip */}
+              <div className="advice-box-sharp" style={{ borderColor: 'rgba(245, 158, 11, 0.3)', background: 'rgba(245, 158, 11, 0.08)' }}>
+                <span style={{ fontSize: '14px', flexShrink: 0 }}>💡</span>
+                <span style={{ color: 'rgba(255, 255, 255, 0.85)' }}>
+                  <strong>¿No escuchas nada en tu iPhone?</strong> Revisa que la pestaña física lateral no esté en modo silencio (🔕) o conecta unos auriculares.
                 </span>
               </div>
 
@@ -1125,8 +1196,11 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                   onClick={() => {
                     if (audioMode === 'subtitles') {
                       handleModeChange('audio');
+                    } else if (!isListening || isAudioSuspended) {
+                      handleUserAudioUnlock();
                     } else {
-                      setIsListening(!isListening);
+                      setIsListening(false);
+                      backgroundAudioManager.stop();
                     }
                   }}
                 >
@@ -1181,10 +1255,11 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                 try { navigator.vibrate?.(15); } catch {}
                 if (audioMode === 'subtitles') {
                   handleModeChange('audio');
-                } else if (isAudioSuspended || (status === 'connecting' && !hasConnectedOnceRef.current)) {
+                } else if (!isListening || isAudioSuspended || (status === 'connecting' && !hasConnectedOnceRef.current)) {
                   handleUserAudioUnlock();
                 } else {
-                  setIsListening(!isListening);
+                  setIsListening(false);
+                  backgroundAudioManager.stop();
                 }
               }}
             >
