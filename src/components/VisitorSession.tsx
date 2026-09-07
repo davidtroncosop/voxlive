@@ -197,6 +197,8 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     if (newMode === 'subtitles') {
       setIsListening(false);
       resetPlaybackQueue();
+      speechQueueRef.current = [];
+      isSpeakingRef.current = false;
       if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         window.speechSynthesis.cancel();
       }
@@ -215,6 +217,8 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
         lang: newLang,
       }));
     }
+    speechQueueRef.current = [];
+    isSpeakingRef.current = false;
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
@@ -225,6 +229,8 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
   const nextStartTimeRef = useRef<number>(0);
   const gainNodeRef = useRef<GainNode | null>(null);
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const speechQueueRef = useRef<SpeechSynthesisUtterance[]>([]);
+  const isSpeakingRef = useRef<boolean>(false);
 
   const stopHeartbeat = () => {
     if (heartbeatTimerRef.current !== null) {
@@ -366,7 +372,10 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
               const index = prev.findIndex(item => item.id === newLine.id);
               if (index >= 0) {
                 const updated = [...prev];
-                updated[index] = newLine;
+                updated[index] = {
+                  ...newLine,
+                  timestamp: updated[index].timestamp || newLine.timestamp,
+                };
                 return updated;
               }
               return [newLine, ...prev.slice(0, 49)];
@@ -454,7 +463,11 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
       wsRef.current = null;
     }
     closeAudioContext();
-    window.speechSynthesis.cancel();
+    speechQueueRef.current = [];
+    isSpeakingRef.current = false;
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
     setStatus('idle');
     setHasJoined(false);
     setReconnectAttempt(0);
@@ -575,22 +588,76 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     }
   };
 
-  const speakText = (text: string, langCode: string) => {
-    if (!('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
+  const processSpeechQueue = () => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    if (speechQueueRef.current.length === 0) {
+      isSpeakingRef.current = false;
+      return;
+    }
 
-    const utterance = new SpeechSynthesisUtterance(text);
-    const selectedSpeechLang = SUPPORTED_LANGUAGES.find(l => l.code === langCode)?.speechCode || 'en-US';
+    const nextUtterance = speechQueueRef.current.shift();
+    if (!nextUtterance) {
+      isSpeakingRef.current = false;
+      return;
+    }
+
+    isSpeakingRef.current = true;
+    currentUtteranceRef.current = nextUtterance;
+
+    nextUtterance.onend = () => {
+      isSpeakingRef.current = false;
+      processSpeechQueue();
+    };
+
+    nextUtterance.onerror = (e) => {
+      console.warn('[Visitor] SpeechSynthesis error:', e);
+      isSpeakingRef.current = false;
+      processSpeechQueue();
+    };
+
+    try {
+      window.speechSynthesis.speak(nextUtterance);
+    } catch {
+      isSpeakingRef.current = false;
+      processSpeechQueue();
+    }
+  };
+
+  const speakText = (text: string, langCode: string) => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window) || !text.trim()) return;
+
+    const utterance = new SpeechSynthesisUtterance(text.trim());
+    const selectedSpeechLang = SUPPORTED_LANGUAGES.find(l => l.code === langCode)?.speechCode || 'es-ES';
     utterance.lang = selectedSpeechLang;
 
     const voices = window.speechSynthesis.getVoices();
-    const voice = voices.find(v => v.lang.startsWith(langCode));
+    const voice = voices.find(v => v.lang.startsWith(langCode) || v.lang.replace('_', '-').startsWith(langCode));
     if (voice) utterance.voice = voice;
 
-    utterance.volume = isMuted ? 0 : volume / 100;
-    currentUtteranceRef.current = utterance;
-    window.speechSynthesis.speak(utterance);
+    utterance.volume = isMutedRef.current ? 0 : volume / 100;
+
+    speechQueueRef.current.push(utterance);
+    if (speechQueueRef.current.length > 5) {
+      speechQueueRef.current.shift();
+    }
+
+    if (!isSpeakingRef.current && !window.speechSynthesis.speaking) {
+      processSpeechQueue();
+    }
   };
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      const loadVoices = () => {
+        window.speechSynthesis.getVoices();
+      };
+      loadVoices();
+      window.speechSynthesis.onvoiceschanged = loadVoices;
+      return () => {
+        window.speechSynthesis.onvoiceschanged = null;
+      };
+    }
+  }, []);
 
   useEffect(() => {
     if (gainNodeRef.current && audioContextRef.current) {

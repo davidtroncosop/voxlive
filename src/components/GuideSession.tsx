@@ -64,7 +64,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
   const [textOnlyListeners, setTextOnlyListeners] = useState<number>(0);
   const [langCounts, setLangCounts] = useState<Record<string, number>>({});
   const [isRecording, setIsRecording] = useState<boolean>(false);
-  const [transcripts, setTranscripts] = useState<{ id: string; text: string; timestamp: string }[]>([]);
+  const [transcripts, setTranscripts] = useState<{ id: string; text: string; timestamp: string; isFinal?: boolean }[]>([]);
   const [providerReady, setProviderReady] = useState<boolean | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState<string>(initialLang || 'en');
   const [errorMsg, setErrorMsg] = useState<string>('');
@@ -101,6 +101,8 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
   const isRecordingRef = useRef<boolean>(false);
   const audioSequenceRef = useRef<number>(0);
   const pingTimerRef = useRef<number | null>(null);
+  const currentPhraseIdRef = useRef<string | null>(null);
+  const finalizeTimerRef = useRef<any>(null);
 
   const sendConfiguration = (ws: WebSocket) => {
     ws.send(JSON.stringify({
@@ -194,14 +196,26 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
             setProviderReady(false);
             setErrorMsg(data.message || 'GPT Realtime Translate no está disponible.');
           } else if (data.type === 'transcript') {
-            setTranscripts(prev => [
-              {
-                id: data.id || Math.random().toString(),
+            const lineId = data.id || Math.random().toString();
+            setTranscripts(prev => {
+              const existingIndex = prev.findIndex(item => item.id === lineId);
+              const newLine = {
+                id: lineId,
                 text: data.text,
-                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-              },
-              ...prev.slice(0, 49)
-            ]);
+                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+                isFinal: data.isFinal !== undefined ? data.isFinal : true,
+              };
+
+              if (existingIndex >= 0) {
+                const updated = [...prev];
+                updated[existingIndex] = {
+                  ...newLine,
+                  timestamp: updated[existingIndex].timestamp || newLine.timestamp,
+                };
+                return updated;
+              }
+              return [newLine, ...prev.slice(0, 49)];
+            });
           }
         } catch (e) {
           console.error('[Guide] Error reading websocket message:', e);
@@ -240,6 +254,11 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
   // Stop session
   const stopSession = () => {
     stopPingInterval();
+    if (finalizeTimerRef.current) {
+      clearTimeout(finalizeTimerRef.current);
+      finalizeTimerRef.current = null;
+    }
+    currentPhraseIdRef.current = null;
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
@@ -323,7 +342,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
         const recognition = new SpeechRecognition();
         recognition.continuous = true;
         recognition.interimResults = true;
-        recognition.lang = SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.speechCode || 'es-ES';
+        recognition.lang = SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.speechCode || 'en-US';
 
         recognition.onresult = (event: any) => {
           let interimTranscript = '';
@@ -337,24 +356,74 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
             }
           }
 
-          const currentText = finalTranscript || interimTranscript;
-          if (currentText.trim() && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          const currentText = (finalTranscript || interimTranscript).trim();
+          if (!currentText) return;
+
+          const isDone = Boolean(finalTranscript);
+          const phraseId = currentPhraseIdRef.current || (currentPhraseIdRef.current = 'p_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
+
+          // 1. Immediately update or insert in guide's local transcript list
+          setTranscripts(prev => {
+            const index = prev.findIndex(item => item.id === phraseId);
+            const newLine = {
+              id: phraseId,
+              text: currentText,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+              isFinal: isDone,
+            };
+            if (index >= 0) {
+              const updated = [...prev];
+              updated[index] = {
+                ...newLine,
+                timestamp: updated[index].timestamp || newLine.timestamp,
+              };
+              return updated;
+            }
+            return [newLine, ...prev.slice(0, 49)];
+          });
+
+          // 2. Send to server via WebSocket
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             wsRef.current.send(JSON.stringify({
               type: 'guide_text',
+              id: phraseId,
               text: currentText,
-              isFinal: !!finalTranscript
+              isFinal: isDone,
             }));
+          }
 
-            if (finalTranscript) {
-              setTranscripts(prev => [
-                {
-                  id: Math.random().toString(),
-                  text: finalTranscript,
-                  timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-                },
-                ...prev.slice(0, 49)
-              ]);
+          // 3. Handle phrase completion and silence debounce
+          if (isDone) {
+            currentPhraseIdRef.current = null;
+            if (finalizeTimerRef.current) {
+              clearTimeout(finalizeTimerRef.current);
+              finalizeTimerRef.current = null;
             }
+          } else {
+            // Debounce silence timer: if guide pauses for 1.3s without browser firing isFinal, auto-finalize
+            if (finalizeTimerRef.current) clearTimeout(finalizeTimerRef.current);
+            finalizeTimerRef.current = setTimeout(() => {
+              finalizeTimerRef.current = null;
+              const pendingId = currentPhraseIdRef.current;
+              if (pendingId && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                wsRef.current.send(JSON.stringify({
+                  type: 'guide_text',
+                  id: pendingId,
+                  text: currentText,
+                  isFinal: true,
+                }));
+                setTranscripts(prev => {
+                  const idx = prev.findIndex(item => item.id === pendingId);
+                  if (idx >= 0) {
+                    const updated = [...prev];
+                    updated[idx] = { ...updated[idx], isFinal: true };
+                    return updated;
+                  }
+                  return prev;
+                });
+                currentPhraseIdRef.current = null;
+              }
+            }, 1300);
           }
         };
 
@@ -363,6 +432,31 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
         };
 
         recognition.onend = () => {
+          if (finalizeTimerRef.current) {
+            clearTimeout(finalizeTimerRef.current);
+            finalizeTimerRef.current = null;
+          }
+          if (currentPhraseIdRef.current) {
+            const pendingId = currentPhraseIdRef.current;
+            currentPhraseIdRef.current = null;
+            setTranscripts(prev => {
+              const idx = prev.findIndex(item => item.id === pendingId);
+              if (idx >= 0 && !prev[idx].isFinal) {
+                const updated = [...prev];
+                updated[idx] = { ...updated[idx], isFinal: true };
+                if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                  wsRef.current.send(JSON.stringify({
+                    type: 'guide_text',
+                    id: pendingId,
+                    text: updated[idx].text,
+                    isFinal: true,
+                  }));
+                }
+                return updated;
+              }
+              return prev;
+            });
+          }
           if (isRecordingRef.current && recognitionRef.current === recognition) {
             try {
               recognition.start();
@@ -386,6 +480,11 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
   const stopAudioRecording = () => {
     isRecordingRef.current = false;
     wakeLockManager.release();
+    if (finalizeTimerRef.current) {
+      clearTimeout(finalizeTimerRef.current);
+      finalizeTimerRef.current = null;
+    }
+    currentPhraseIdRef.current = null;
     if (recorderNodeRef.current) {
       recorderNodeRef.current.disconnect();
       recorderNodeRef.current = null;
@@ -823,7 +922,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
                   </div>
                 ) : (
                   transcripts.map((t) => (
-                    <div key={t.id} className="transcript-bubble guide-bubble">
+                    <div key={t.id} className={`transcript-bubble guide-bubble ${!t.isFinal ? 'pending' : ''}`}>
                       <div className="bubble-meta">
                         <span>Tú ({SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.name})</span>
                         <span>{t.timestamp}</span>

@@ -318,7 +318,7 @@ export class TourRoom {
 
         // Guide speech text
         if (data.type === 'guide_text' && connInfo.role === 'guide') {
-          await this.handleGuideText(data.text, data.isFinal);
+          await this.handleGuideText(data.text, Boolean(data.isFinal), typeof data.id === 'string' ? data.id : undefined);
           return;
         }
       }
@@ -750,13 +750,16 @@ export class TourRoom {
                 temperature: 0.1,
                 maxOutputTokens: 250,
               }
-            })
+            }),
+            signal: AbortSignal.timeout(2500)
           }
         );
         if (response.ok) {
           const data = (await response.json()) as any;
           const translated = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
           if (translated) return translated;
+        } else {
+          console.warn(`[DO Room] Gemini returned ${response.status}: ${await response.text()}`);
         }
       } catch (err) {
         console.error('[DO Room] Gemini translation failed:', err);
@@ -783,12 +786,15 @@ export class TourRoom {
             ],
             temperature: 0.1,
             max_tokens: 250,
-          })
+          }),
+          signal: AbortSignal.timeout(2500)
         });
         if (response.ok) {
           const data = (await response.json()) as any;
           const translated = data?.choices?.[0]?.message?.content?.trim();
           if (translated) return translated;
+        } else {
+          console.warn(`[DO Room] OpenAI returned ${response.status}: ${await response.text()}`);
         }
       } catch (err) {
         console.error('[DO Room] OpenAI translation failed:', err);
@@ -798,7 +804,8 @@ export class TourRoom {
     // 3. Free public MyMemory translation fallback
     try {
       const response = await fetch(
-        `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${encodeURIComponent(sourceLang)}|${encodeURIComponent(targetLang)}`
+        `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${encodeURIComponent(sourceLang)}|${encodeURIComponent(targetLang)}`,
+        { signal: AbortSignal.timeout(2500) }
       );
       if (response.ok) {
         const data = (await response.json()) as any;
@@ -812,10 +819,10 @@ export class TourRoom {
   }
 
   // Handle speech transcript from the guide and distribute to all room listeners
-  async handleGuideText(text: string, isFinal: boolean) {
+  async handleGuideText(text: string, isFinal: boolean, clientTranscriptId?: string) {
     if (!text || !text.trim()) return;
     const normalizedText = this.normalizeProtectedTerms(text);
-    const transcriptId = Math.random().toString(36).slice(2);
+    const transcriptId = clientTranscriptId || Math.random().toString(36).slice(2);
 
     // 1. Echo transcript back to the guide
     if (this.guideSocket && this.guideSocket.readyState === WebSocket.OPEN) {
@@ -829,8 +836,19 @@ export class TourRoom {
       } catch {}
     }
 
+    // Collect all active visitor WebSockets
+    const allSockets = this.state.getWebSockets();
+    const visitorSockets: { ws: WebSocket; info: ConnectionInfo }[] = [];
+    for (const ws of allSockets) {
+      if (ws.readyState === WebSocket.OPEN) {
+        const info = ws.deserializeAttachment() as ConnectionInfo | null;
+        if (info && info.role === 'visitor') {
+          visitorSockets.push({ ws, info });
+        }
+      }
+    }
+
     // 2. Broadcast immediately to same-language visitors
-    const visitors = this.state.getWebSockets('role:visitor');
     const sameMsg = JSON.stringify({
       type: 'transcript',
       id: transcriptId,
@@ -841,9 +859,8 @@ export class TourRoom {
       hasAudio: true, // Guides raw microphone audio is streamed directly
     });
 
-    for (const ws of visitors) {
-      const info = ws.deserializeAttachment() as ConnectionInfo | null;
-      if (info?.lang === this.guideLang && ws.readyState === WebSocket.OPEN) {
+    for (const { ws, info } of visitorSockets) {
+      if (info.lang === this.guideLang) {
         try {
           ws.send(sameMsg);
         } catch {}
@@ -851,14 +868,30 @@ export class TourRoom {
     }
 
     // 3. For visitors listening in OTHER languages:
-    // Translate final transcripts so they appear and play TTS in the listener's language
-    if (!isFinal) return;
+    // When NOT final (interim): broadcast immediately so subtitles appear live in real-time as the guide speaks!
+    if (!isFinal) {
+      for (const { ws, info } of visitorSockets) {
+        if (info.lang !== this.guideLang) {
+          try {
+            ws.send(JSON.stringify({
+              type: 'transcript',
+              id: transcriptId,
+              originalText: normalizedText,
+              translatedText: normalizedText, // Shows live speech progress until finalized
+              languageCode: info.lang,
+              isFinal: false,
+              hasAudio: false,
+            }));
+          } catch {}
+        }
+      }
+      return;
+    }
 
-    const allVisitors = this.state.getWebSockets('role:visitor');
+    // 4. When final: Translate to each target language
     const otherLanguages = new Set<string>();
-    for (const ws of allVisitors) {
-      const info = ws.deserializeAttachment() as ConnectionInfo | null;
-      if (info?.lang && info.lang !== this.guideLang) {
+    for (const { info } of visitorSockets) {
+      if (info.lang && info.lang !== this.guideLang) {
         otherLanguages.add(info.lang);
       }
     }
@@ -878,9 +911,32 @@ export class TourRoom {
           hasAudio: false, // Triggers visitor client SpeechSynthesis TTS in target language
         });
 
-        this.broadcastToLanguage(targetLang, foreignMsg);
+        for (const { ws, info } of visitorSockets) {
+          if (info.lang === targetLang) {
+            try {
+              ws.send(foreignMsg);
+            } catch {}
+          }
+        }
       } catch (err) {
         console.error(`[DO Room] Error broadcasting translation to ${targetLang}:`, err);
+        // Fallback: send original text as final so visitor is never left without final transcript
+        const fallbackMsg = JSON.stringify({
+          type: 'transcript',
+          id: transcriptId,
+          originalText: normalizedText,
+          translatedText: normalizedText,
+          languageCode: targetLang,
+          isFinal: true,
+          hasAudio: false,
+        });
+        for (const { ws, info } of visitorSockets) {
+          if (info.lang === targetLang) {
+            try {
+              ws.send(fallbackMsg);
+            } catch {}
+          }
+        }
       }
     }
   }
@@ -906,11 +962,11 @@ export class TourRoom {
 
   // Broadcast data ONLY to visitors listening in a specific language
   broadcastToLanguage(lang: string, message: string) {
-    const visitors = this.state.getWebSockets('role:visitor');
-    for (const ws of visitors) {
+    const allSockets = this.state.getWebSockets();
+    for (const ws of allSockets) {
       if (ws.readyState === WebSocket.OPEN) {
         const info = ws.deserializeAttachment() as ConnectionInfo | null;
-        if (info?.lang === lang) {
+        if (info && info.role === 'visitor' && info.lang === lang) {
           try {
             ws.send(message);
           } catch {
@@ -926,17 +982,17 @@ export class TourRoom {
     const sequence = ((this.audioSequences.get(lang) || 0) + 1) >>> 0;
     this.audioSequences.set(lang, sequence);
 
-    const visitors = this.state.getWebSockets('role:visitor');
+    const allSockets = this.state.getWebSockets();
     const pcmBytes = base64ToBytes(base64Data);
 
     let frame16k: ArrayBuffer | null = null;
     let frame24k: ArrayBuffer | null = null;
     let legacyMessage: string | null = null;
 
-    for (const ws of visitors) {
+    for (const ws of allSockets) {
       if (ws.readyState !== WebSocket.OPEN) continue;
       const info = ws.deserializeAttachment() as ConnectionInfo | null;
-      if (!info || info.lang !== lang) continue;
+      if (!info || info.role !== 'visitor' || info.lang !== lang) continue;
 
       // Zero-audio mode: visitor chose "Solo subtítulos", saving 100% of audio bandwidth
       if (info.audioFormat === 'none') continue;
