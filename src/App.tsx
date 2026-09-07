@@ -104,6 +104,7 @@ function App() {
               onBack={handleBackToHome} 
               wsUrl={wsUrl} 
               initialRoomCode={initialRoomCode}
+              initialLang={typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get("lang") || "en" : "en"}
             />
           )}
           

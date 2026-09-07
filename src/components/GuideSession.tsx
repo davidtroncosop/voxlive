@@ -31,6 +31,7 @@ interface GuideSessionProps {
   onBack: () => void;
   wsUrl: string;
   initialRoomCode?: string;
+  initialLang?: string;
 }
 
 function generateCleanRoomCode(): string {
@@ -42,7 +43,12 @@ function generateCleanRoomCode(): string {
   return code;
 }
 
-export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl, initialRoomCode }) => {
+export const GuideSession: React.FC<GuideSessionProps> = ({ 
+  onBack, 
+  wsUrl, 
+  initialRoomCode,
+  initialLang = 'en'
+}) => {
   const [status, setStatus] = useState<ConnectionStatus>('idle');
   const [hasStarted, setHasStarted] = useState<boolean>(false);
   const [roomCode, setRoomCode] = useState<string>(() => {
@@ -60,7 +66,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl, initi
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [transcripts, setTranscripts] = useState<{ id: string; text: string; timestamp: string }[]>([]);
   const [providerReady, setProviderReady] = useState<boolean | null>(null);
-  const [selectedLanguage, setSelectedLanguage] = useState<string>('es');
+  const [selectedLanguage, setSelectedLanguage] = useState<string>(initialLang || 'en');
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [dbLevel, setDbLevel] = useState<number>(0);
   const [audioMode, setAudioMode] = useState<'worklet' | 'scriptProcessor'>('worklet');
