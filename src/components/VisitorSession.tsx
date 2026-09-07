@@ -726,14 +726,14 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                   onClick={() => handleModeChange('audio')}
                   className={`mode-tab-btn ${audioMode === 'audio' ? 'active' : ''}`}
                 >
-                  <Headphones size={15} /> Audio en Vivo (HD)
+                  <Headphones size={15} /> <span>Audio HD</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => handleModeChange('subtitles')}
                   className={`mode-tab-btn ${audioMode === 'subtitles' ? 'active' : ''}`}
                 >
-                  <Globe size={15} /> Solo Subtítulos (0 kbps)
+                  <Globe size={15} /> <span>Subtítulos</span>
                 </button>
               </div>
 
@@ -1146,7 +1146,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
 
             <button
               type="button"
-              className="mobile-dock-btn"
+              className="mobile-dock-btn mobile-dock-btn--icon-only"
               onClick={() => {
                 try { navigator.vibrate?.(10); } catch {}
                 setIsMuted(!isMuted);
