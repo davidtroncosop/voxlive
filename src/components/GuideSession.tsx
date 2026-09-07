@@ -43,6 +43,7 @@ function generateCleanRoomCode(): string {
 
 export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => {
   const [status, setStatus] = useState<ConnectionStatus>('idle');
+  const [hasStarted, setHasStarted] = useState<boolean>(false);
   const [roomCode, setRoomCode] = useState<string>('');
   const [hostToken, setHostToken] = useState<string>('');
   const [activeListeners, setActiveListeners] = useState<number>(0);
@@ -115,12 +116,13 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
 
   // Create room and initialize WebSocket
   const startSession = async () => {
-    setStatus('connecting');
-    setProviderReady(null);
-    setErrorMsg('');
     try {
       const generatedCode = roomCode || generateCleanRoomCode();
       setRoomCode(generatedCode);
+      setHasStarted(true);
+      setStatus('connecting');
+      setProviderReady(null);
+      setErrorMsg('');
 
       const existingToken = hostToken || 
         sessionStorage.getItem(`hostToken_${generatedCode}`) || 
@@ -191,12 +193,18 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
 
       ws.onerror = (e) => {
         console.error('[Guide] WebSocket error:', e);
+        if (status !== 'connected') {
+          setHasStarted(false);
+        }
         setStatus('error');
         setErrorMsg('Error al conectar con el servidor de Cloudflare.');
       };
 
       ws.onclose = (e) => {
         stopPingInterval();
+        if (status !== 'connected') {
+          setHasStarted(false);
+        }
         setStatus('disconnected');
         setIsRecording(false);
         stopAudioRecording();
@@ -207,6 +215,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
 
     } catch (err: any) {
       console.error(err);
+      setHasStarted(false);
       setStatus('error');
       setErrorMsg('No se pudo establecer la conexión.');
     }
@@ -221,6 +230,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
     }
     stopAudioRecording();
     wakeLockManager.release();
+    setHasStarted(false);
     setStatus('idle');
     setRoomCode('');
     setActiveListeners(0);
@@ -447,7 +457,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
 
   return (
     <div style={{ width: '100%' }}>
-      {status === 'idle' || status === 'connecting' || status === 'error' ? (
+      {!hasStarted ? (
         <div className="setup-card-wrapper">
           <div className="setup-card-glass">
             <div className="setup-card-header">
@@ -589,6 +599,13 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
                 </div>
               </div>
 
+              {status === 'connecting' && (
+                <div className="connection-banner connection-banner--connecting" style={{ marginBottom: '20px' }}>
+                  <span className="pulse-dot" style={{ backgroundColor: '#38bdf8', width: 7, height: 7 }}></span>
+                  <span>Iniciando canal seguro en Cloudflare Edge...</span>
+                </div>
+              )}
+
               {errorMsg && (
                 <div className="connection-banner" style={{ marginBottom: '20px' }}>
                   <AlertCircle size={16} />
@@ -600,6 +617,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
                 <button 
                   className={`action-mic-btn ${isRecording ? 'active' : 'inactive'}`}
                   onClick={toggleRecording}
+                  disabled={status === 'connecting'}
                   aria-label={isRecording ? 'Detener transmisión de voz' : 'Iniciar transmisión de voz'}
                   style={isRecording ? {
                     boxShadow: `0 0 ${20 + Math.round(dbLevel * 0.45)}px rgba(239, 68, 68, ${0.55 + dbLevel * 0.004})`,
@@ -610,7 +628,11 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
                   {isRecording ? <MicOff size={42} /> : <Mic size={42} />}
                 </button>
                 <div className="action-mic-label">
-                  {isRecording ? 'Tu voz está siendo transmitida' : 'Micrófono apagado'}
+                  {status === 'connecting'
+                    ? 'Iniciando servidor en la nube...'
+                    : isRecording
+                    ? 'Tu voz está siendo transmitida'
+                    : 'Micrófono apagado'}
                 </div>
                 <div className="guide-mobile-quickbar">
                   <div className="guide-mobile-quickitem">
@@ -699,8 +721,8 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
                       A++
                     </button>
                   </div>
-                  <span className="badge-live">
-                    <span className="pulse-dot"></span> LIVE
+                  <span className={status === 'connected' ? 'badge-live' : 'badge-connecting'}>
+                    <span className="pulse-dot"></span> {status === 'connected' ? 'LIVE' : 'CONECTANDO'}
                   </span>
                 </div>
               </div>

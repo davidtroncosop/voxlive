@@ -40,7 +40,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
   initialRoomCode = '',
   initialLang = 'es'
 }) => {
-  const [status, setStatus] = useState<ConnectionStatus>('idle');
+  const [status, setStatus] = useState<ConnectionStatus>(() => (initialRoomCode && initialRoomCode.trim().length >= 4 ? 'connecting' : 'idle'));
   const [roomCodeInput, setRoomCodeInput] = useState<string>(initialRoomCode.toUpperCase());
   const [roomCode, setRoomCode] = useState<string>(initialRoomCode.toUpperCase());
   const [selectedLanguage, setSelectedLanguage] = useState<string>(initialLang);
@@ -54,7 +54,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
   const [listenersCount, setListenersCount] = useState<number>(0);
   const [guideLang, setGuideLang] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
-  const [hasJoined, setHasJoined] = useState<boolean>(false);
+  const [hasJoined, setHasJoined] = useState<boolean>(() => Boolean(initialRoomCode && initialRoomCode.trim().length >= 4));
   const [isAudioSuspended, setIsAudioSuspended] = useState<boolean>(false);
   const [reconnectAttempt, setReconnectAttempt] = useState<number>(0);
   const [networkQuality, setNetworkQuality] = useState<NetworkQuality>({ rttMs: null, status: 'unknown' });
@@ -381,8 +381,9 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
         if (shouldReconnectRef.current && hasConnectedOnceRef.current) {
           scheduleReconnect();
         } else {
+          setHasJoined(false);
           setStatus('error');
-          setErrorMsg('No se pudo conectar a la sala. Verifica que el código sea correcto.');
+          setErrorMsg('No se pudo conectar a la sala. Verifica que el código sea correcto o que el guía esté activo.');
           closeAudioContext();
         }
       };
@@ -392,6 +393,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
       if (shouldReconnectRef.current && hasConnectedOnceRef.current) {
         scheduleReconnect();
       } else {
+        setHasJoined(false);
         setStatus('error');
         setErrorMsg('Ocurrió un error en la conexión.');
         closeAudioContext();
@@ -415,7 +417,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     reconnectAttemptRef.current = 0;
     roomCodeRef.current = code;
     setReconnectAttempt(0);
-    setHasJoined(false);
+    setHasJoined(true);
     setStatus('connecting');
     setErrorMsg('');
     setRoomCode(code);
@@ -587,7 +589,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
 
   // Auto join if initialRoomCode provided on mount (QR scan or deep link)
   useEffect(() => {
-    if (initialRoomCode && initialRoomCode.trim().length >= 4 && !hasJoined) {
+    if (initialRoomCode && initialRoomCode.trim().length >= 4) {
       joinRoom(initialRoomCode);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -702,9 +704,18 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
               </div>
 
               {status === 'connecting' && (
-                <div className="connection-banner" style={{ marginBottom: '20px' }}>
-                  <AlertCircle size={16} />
-                  <span>{errorMsg || `Reconectando automáticamente (intento ${reconnectAttempt})...`}</span>
+                <div className={`connection-banner ${hasConnectedOnceRef.current ? '' : 'connection-banner--connecting'}`} style={{ marginBottom: '20px' }}>
+                  {hasConnectedOnceRef.current ? (
+                    <>
+                      <AlertCircle size={16} />
+                      <span>{errorMsg || `Reconectando automáticamente (intento ${reconnectAttempt})...`}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="pulse-dot" style={{ backgroundColor: '#38bdf8', width: 7, height: 7 }}></span>
+                      <span>Sincronizando con la sala en vivo...</span>
+                    </>
+                  )}
                 </div>
               )}
 
@@ -778,6 +789,13 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                             <Volume2 size={32} />
                           </div>
                         </>
+                      ) : status === 'connecting' ? (
+                        <>
+                          <div className="wave-circle" style={{ borderColor: 'rgba(56, 189, 248, 0.4)', animationDuration: '2s' }}></div>
+                          <div className="wave-center" style={{ background: 'rgba(0, 108, 210, 0.25)', border: '1px solid rgba(56, 189, 248, 0.4)', borderRadius: 0, color: 'var(--blue-vibrant)' }}>
+                            <Headphones size={32} />
+                          </div>
+                        </>
                       ) : (
                         <div className="wave-center" style={{ background: 'var(--color-text-muted)', boxShadow: 'none', borderRadius: 0 }}>
                           <VolumeX size={32} />
@@ -787,7 +805,17 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
 
                     <div className="action-mic-label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       {status === 'connecting' ? (
-                        'Reconectando...'
+                        hasConnectedOnceRef.current ? (
+                          <>
+                            <span className="pulse-dot" style={{ backgroundColor: '#f59e0b' }}></span>
+                            Reconectando...
+                          </>
+                        ) : (
+                          <>
+                            <span className="pulse-dot" style={{ backgroundColor: 'var(--blue-vibrant)' }}></span>
+                            Sincronizando sala...
+                          </>
+                        )
                       ) : isListening ? (
                         <>
                           <span className="pulse-dot" style={{ backgroundColor: 'var(--blue-vibrant)' }}></span>
@@ -800,7 +828,9 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
 
                     <p style={{ color: 'rgba(255, 255, 255, 0.75)', fontSize: '14px', maxWidth: '360px', marginTop: '-8px' }}>
                       {status === 'connecting'
-                        ? 'Conservaremos tu sesión y el audio continuará automáticamente.'
+                        ? (hasConnectedOnceRef.current
+                            ? 'Conservaremos tu sesión y el audio continuará automáticamente.'
+                            : 'Estableciendo conexión de ultra baja latencia...')
                         : isListening
                         ? `El audio se traduce al ${SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.name}.`
                         : 'Activa la audición para empezar a reproducir la traducción.'}
@@ -892,8 +922,8 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                       A++
                     </button>
                   </div>
-                  <span className={`badge ${status === 'connected' ? 'badge-connected' : 'badge-live'}`}>
-                    {status === 'connected' ? 'Conectado' : 'Reconectando'}
+                  <span className={`badge ${status === 'connected' ? 'badge-connected' : status === 'connecting' ? 'badge-connecting' : 'badge-live'}`}>
+                    {status === 'connected' ? 'Conectado' : status === 'connecting' ? 'Sincronizando' : 'Reconectando'}
                   </span>
                 </div>
               </div>
@@ -901,7 +931,11 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                 {transcripts.length === 0 ? (
                   <div className="empty-state">
                     <Headphones size={32} />
-                    <p>Esperando audio para traducir...</p>
+                    <p>
+                      {status === 'connecting'
+                        ? 'Sincronizando canal de traducción en tiempo real...'
+                        : 'Esperando audio para traducir...'}
+                    </p>
                   </div>
                 ) : (
                   transcripts.map((t) => (
@@ -1056,12 +1090,18 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
           <div className="mobile-bottom-dock">
             <button
               type="button"
-              className={`mobile-dock-btn ${isListening && !isAudioSuspended ? 'mobile-dock-btn--primary' : 'mobile-dock-btn--highlight'}`}
+              className={`mobile-dock-btn ${
+                status === 'connecting' && !hasConnectedOnceRef.current
+                  ? 'mobile-dock-btn--highlight'
+                  : isListening && !isAudioSuspended
+                  ? 'mobile-dock-btn--primary'
+                  : 'mobile-dock-btn--highlight'
+              }`}
               onClick={() => {
                 try { navigator.vibrate?.(15); } catch {}
                 if (audioMode === 'subtitles') {
                   handleModeChange('audio');
-                } else if (isAudioSuspended) {
+                } else if (isAudioSuspended || (status === 'connecting' && !hasConnectedOnceRef.current)) {
                   handleUserAudioUnlock();
                 } else {
                   setIsListening(!isListening);
@@ -1071,6 +1111,10 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
               {audioMode === 'subtitles' ? (
                 <>
                   <Headphones size={16} /> <span>Activar Voz</span>
+                </>
+              ) : status === 'connecting' && !hasConnectedOnceRef.current ? (
+                <>
+                  <Volume2 size={16} /> <span>Sincronizando...</span>
                 </>
               ) : isAudioSuspended ? (
                 <>

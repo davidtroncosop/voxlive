@@ -888,6 +888,20 @@ button {
   border-radius: 0 !important;
 }
 
+.session-container .badge-connected {
+  background: rgba(16, 185, 129, 0.15) !important;
+  border: 1px solid rgba(16, 185, 129, 0.45) !important;
+  color: #34d399 !important;
+  border-radius: 0 !important;
+}
+
+.session-container .badge-connecting {
+  background: rgba(0, 108, 210, 0.18) !important;
+  border: 1px solid rgba(56, 189, 248, 0.4) !important;
+  color: #38bdf8 !important;
+  border-radius: 0 !important;
+}
+
 .session-container .room-code-tag,
 .session-container .glass-input,
 .session-container .glass-select,
@@ -2294,6 +2308,44 @@ button {
   border-radius: var(--radius-sm);
   margin-bottom: 24px;
   font-size: 14px;
+}
+
+.connection-banner--connecting {
+  background: rgba(0, 108, 210, 0.14) !important;
+  border: 1px solid rgba(56, 189, 248, 0.35) !important;
+  color: #38bdf8 !important;
+}
+
+.badge-connected {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.45);
+  border-radius: 0;
+}
+
+.badge-connecting {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #38bdf8;
+  background: rgba(0, 108, 210, 0.18);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  border-radius: 0;
 }
 
 /* Subtitle Font Size Switcher */
