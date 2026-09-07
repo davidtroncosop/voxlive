@@ -147,11 +147,13 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     setIsListening(true);
     setIsAudioSuspended(false);
 
-    // 4. If a translated phrase arrived before user tapped, speak it immediately!
-    if (lastUnspokenTranscriptRef.current) {
+    // 4. If a translated phrase arrived before user tapped and no server audio is active, speak it
+    if (lastUnspokenTranscriptRef.current && !hasReceivedServerAudioRef.current) {
       const textToSpeak = lastUnspokenTranscriptRef.current;
       lastUnspokenTranscriptRef.current = null;
       speakText(textToSpeak, selectedLanguageRef.current);
+    } else {
+      lastUnspokenTranscriptRef.current = null;
     }
   };
 
@@ -286,6 +288,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
   const spokenPhraseIdsRef = useRef<Set<string>>(new Set());
   const lastUnspokenTranscriptRef = useRef<string | null>(null);
   const lockedMaleVoiceRef = useRef<Map<string, SpeechSynthesisVoice>>(new Map());
+  const hasReceivedServerAudioRef = useRef<boolean>(false);
 
   const stopHeartbeat = () => {
     if (heartbeatTimerRef.current !== null) {
@@ -375,6 +378,10 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
       ws.onmessage = (event) => {
         try {
           if (event.data instanceof ArrayBuffer) {
+            hasReceivedServerAudioRef.current = true;
+            if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+              try { window.speechSynthesis.cancel(); } catch {}
+            }
             const audioFrame = decodeAudioFrame(event.data);
             trackAudioSequence(audioFrame.sequence);
 
@@ -408,6 +415,10 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
           } 
           
           else if (data.type === 'audio_chunk') {
+            hasReceivedServerAudioRef.current = true;
+            if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+              try { window.speechSynthesis.cancel(); } catch {}
+            }
             if (typeof data.sequence === 'number') trackAudioSequence(data.sequence);
             if (audioModeRef.current === 'audio' && isListeningRef.current && !isMutedRef.current) {
               playPcmBytes(base64ToBytes(data.data), data.sampleRate || 16000);
@@ -437,8 +448,8 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
               return [newLine, ...prev.slice(0, 49)];
             });
 
-            // TTS playback: Speak ONLY ONCE per final translated phrase
-            if (audioModeRef.current === 'audio' && !data.hasAudio && newLine.isFinal && newLine.translatedText) {
+            // TTS playback: ONLY fallback if server did NOT send audio and no server audio stream has been received
+            if (audioModeRef.current === 'audio' && !data.hasAudio && !hasReceivedServerAudioRef.current && newLine.isFinal && newLine.translatedText) {
               lastUnspokenTranscriptRef.current = newLine.translatedText;
               if (isListeningRef.current && !isMutedRef.current) {
                 if (!spokenPhraseIdsRef.current.has(newLine.id)) {

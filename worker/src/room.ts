@@ -418,7 +418,7 @@ export class TourRoom {
         model: TRANSLATION_PROVIDER.apiModel,
         hostToken: this.guideHostSecret,
         message: configured
-          ? 'OpenAI Realtime Translate está configurado y activo.'
+          ? 'OpenAI TTS (Voz masculina Onyx) activo en alta definición.'
           : 'Falta configurar OPENAI_API_KEY en el servidor de Cloudflare.',
       }));
     } catch {}
@@ -440,29 +440,9 @@ export class TourRoom {
     this.openAIFailedMap.clear();
   }
 
-  async getOpenAIConnection(targetLang: string): Promise<OpenAIConnection | null> {
-    const apiKey = this.env.OPENAI_API_KEY || '';
-
-    if (!apiKey) {
-      console.log('[OpenAI DO] OPENAI_API_KEY is not configured.');
-      return null;
-    }
-
-    if (this.openAIFailedMap.has(targetLang)) return null;
-
-    const existing = this.openAIConnections.get(targetLang);
-    if (existing) return existing;
-
-    const pending = this.openAIConnectionPromises.get(targetLang);
-    if (pending) return pending;
-
-    const connectionPromise = this.createOpenAIConnection(targetLang, apiKey);
-    this.openAIConnectionPromises.set(targetLang, connectionPromise);
-    try {
-      return await connectionPromise;
-    } finally {
-      this.openAIConnectionPromises.delete(targetLang);
-    }
+  async getOpenAIConnection(_targetLang: string): Promise<OpenAIConnection | null> {
+    // Suppressed in favor of single master Onyx male voice via OpenAI TTS in handleGuideText
+    return null;
   }
 
   async createOpenAIConnection(targetLang: string, apiKey: string): Promise<OpenAIConnection | null> {
