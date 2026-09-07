@@ -27,6 +27,23 @@ const RECONNECT_MAX_DELAY_MS = 10_000;
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const HEARTBEAT_TIMEOUT_MS = 35_000;
 
+// Deterministic male voice resolution keywords & female filter keywords
+const MALE_VOICE_KEYWORDS = [
+  'jorge', 'diego', 'juan', 'carlos', 'pablo', 'raul', 'raúl', 'alvaro', 'álvaro', 'mateo', 'miguel', 'enrique',
+  'daniel', 'oliver', 'alex', 'ryan', 'guy', 'fred', 'george', 'thomas', 'david', 'arthur', 'nathan', 'aaron',
+  'thomas', 'nicolas', 'henri', 'paul', 'claude',
+  'luca', 'giorgio', 'matteo',
+  'stefan', 'markus', 'hans', 'martin', 'conrad',
+  'cristiano', 'rodrigo', 'antonio', 'antónio',
+  'male', 'masculin', 'homme', 'mann', 'uomo', 'hombre'
+];
+
+const FEMALE_VOICE_KEYWORDS = [
+  'paulina', 'monica', 'mónica', 'rosa', 'luciana', 'elena', 'helena', 'laura', 'maria', 'maría',
+  'sofia', 'sofía', 'carmen', 'alicia', 'samantha', 'victoria', 'karen', 'susan', 'zira', 'female',
+  'feminin', 'femme', 'frau', 'donna', 'mujer', 'kyoko', 'otoya', 'tingting', 'siri voz 1'
+];
+
 interface VisitorSessionProps {
   onBack: () => void;
   wsUrl: string;
@@ -268,6 +285,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const spokenPhraseIdsRef = useRef<Set<string>>(new Set());
   const lastUnspokenTranscriptRef = useRef<string | null>(null);
+  const lockedMaleVoiceRef = useRef<Map<string, SpeechSynthesisVoice>>(new Map());
 
   const stopHeartbeat = () => {
     if (heartbeatTimerRef.current !== null) {
@@ -515,6 +533,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
+    lockedMaleVoiceRef.current.clear();
     setStatus('idle');
     setHasJoined(false);
     setReconnectAttempt(0);
@@ -635,6 +654,58 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     }
   };
 
+  // Deterministically resolves and locks a male voice persona per language (never alternates mid-stream)
+  const getLockedMaleVoice = (langCode: string): SpeechSynthesisVoice | null => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
+
+    const existing = lockedMaleVoiceRef.current.get(langCode);
+    if (existing) return existing;
+
+    const voices = window.speechSynthesis.getVoices();
+    if (!voices || voices.length === 0) return null;
+
+    const langVoices = voices.filter(v =>
+      v.lang.toLowerCase().startsWith(langCode.toLowerCase()) ||
+      v.lang.toLowerCase().replace('_', '-').startsWith(langCode.toLowerCase())
+    );
+    if (langVoices.length === 0) return null;
+
+    // 1. Prioritize explicit male voices with Natural / Enhanced quality
+    let selected = langVoices.find(v => {
+      const name = v.name.toLowerCase();
+      const isMale = MALE_VOICE_KEYWORDS.some(kw => name.includes(kw));
+      const isFemale = FEMALE_VOICE_KEYWORDS.some(kw => name.includes(kw));
+      return isMale && !isFemale && (name.includes('enhanced') || name.includes('natural'));
+    });
+
+    // 2. Any explicit male voice
+    if (!selected) {
+      selected = langVoices.find(v => {
+        const name = v.name.toLowerCase();
+        return MALE_VOICE_KEYWORDS.some(kw => name.includes(kw)) &&
+          !FEMALE_VOICE_KEYWORDS.some(kw => name.includes(kw));
+      });
+    }
+
+    // 3. Any voice that does not contain known female names
+    if (!selected) {
+      selected = langVoices.find(v => {
+        const name = v.name.toLowerCase();
+        return !FEMALE_VOICE_KEYWORDS.some(kw => name.includes(kw));
+      });
+    }
+
+    // 4. Fallback to first matching language voice
+    if (!selected) {
+      selected = langVoices[0];
+    }
+
+    if (selected) {
+      lockedMaleVoiceRef.current.set(langCode, selected);
+    }
+    return selected;
+  };
+
   const speakText = (text: string, langCode: string) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window) || !text.trim()) return;
 
@@ -652,12 +723,14 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     const selectedSpeechLang = SUPPORTED_LANGUAGES.find(l => l.code === langCode)?.speechCode || 'es-ES';
     utterance.lang = selectedSpeechLang;
 
-    const voices = window.speechSynthesis.getVoices();
-    const voice = voices.find(v => v.lang.startsWith(langCode) || v.lang.replace('_', '-').startsWith(langCode));
-    if (voice) utterance.voice = voice;
+    // Fixed male voice persona (never changes character)
+    const maleVoice = getLockedMaleVoice(langCode);
+    if (maleVoice) utterance.voice = maleVoice;
 
     utterance.volume = isMutedRef.current ? 0 : volume / 100;
     utterance.rate = 1.05;
+    // Consistent masculine pitch across all phrases to ensure character stability
+    utterance.pitch = 0.88;
 
     utterance.onend = () => {
       if ((window as any).__voxliveCurrentUtterance === utterance) {
@@ -686,7 +759,10 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
   useEffect(() => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       const loadVoices = () => {
-        window.speechSynthesis.getVoices();
+        const voices = window.speechSynthesis.getVoices();
+        if (voices.length > 0) {
+          getLockedMaleVoice(selectedLanguageRef.current);
+        }
       };
       loadVoices();
       window.speechSynthesis.onvoiceschanged = loadVoices;
@@ -694,6 +770,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
         window.speechSynthesis.onvoiceschanged = null;
       };
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
