@@ -458,6 +458,27 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl, initi
     }
   };
 
+  const handleLanguageChange = (newLang: string) => {
+    setSelectedLanguage(newLang);
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'config',
+        provider: TRANSLATION_PROVIDER.id,
+        nativeLanguage: newLang,
+        customGlossary: glossaryTerms,
+      }));
+    }
+    if (recognitionRef.current) {
+      const speechCode = SUPPORTED_LANGUAGES.find(l => l.code === newLang)?.speechCode || 'es-ES';
+      try {
+        recognitionRef.current.lang = speechCode;
+        if (isRecordingRef.current) {
+          recognitionRef.current.stop();
+        }
+      } catch {}
+    }
+  };
+
   useEffect(() => {
     return () => {
       stopAudioRecording();
@@ -607,12 +628,20 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl, initi
           {/* Main workspace */}
           <div>
             <div className="glass-card" style={{ marginBottom: '32px' }}>
-              <div className="panel-header">
+              <div className="panel-header" style={{ flexWrap: 'wrap', gap: '12px' }}>
                 <div className="panel-title">
                   <Mic size={24} style={{ color: isRecording ? '#ef4444' : 'var(--blue)' }} />
                   Panel de Transmisión
                 </div>
-                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div style={{ minWidth: '150px' }}>
+                    <GlassSelect
+                      value={selectedLanguage}
+                      options={SUPPORTED_LANGUAGES}
+                      onChange={handleLanguageChange}
+                      disabled={status === 'connecting'}
+                    />
+                  </div>
                   <div className="room-code-plain">
                     Sala: <span className="room-code-value">{roomCode}</span>
                   </div>
@@ -869,11 +898,16 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl, initi
                 </div>
               )}
 
-              <div className="status-row">
-                <span className="status-label">Idioma de origen</span>
-                <span className="status-val">
-                  {SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.flag} {SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.name}
-                </span>
+              <div className="status-row" style={{ alignItems: 'center' }}>
+                <span className="status-label">Idioma de emisión</span>
+                <div style={{ width: '160px' }}>
+                  <GlassSelect
+                    value={selectedLanguage}
+                    options={SUPPORTED_LANGUAGES}
+                    onChange={handleLanguageChange}
+                    disabled={status === 'connecting'}
+                  />
+                </div>
               </div>
 
               {/* Integrated QR Block inside the status card */}

@@ -214,11 +214,11 @@ export class TourRoom {
       if (message instanceof ArrayBuffer) {
         if (connInfo.role === 'guide') {
           // Immediately stream guide audio to same-language listeners with zero delay
-          const sameLangSockets = this.state.getWebSockets(`lang:${this.guideLang}`);
-          for (const targetWs of sameLangSockets) {
+          const visitors = this.state.getWebSockets('role:visitor');
+          for (const targetWs of visitors) {
             if (targetWs.readyState === WebSocket.OPEN) {
               const info = targetWs.deserializeAttachment() as ConnectionInfo | null;
-              if (info?.role === 'visitor' && info.audioFormat !== 'none') {
+              if (info?.lang === this.guideLang && info.audioFormat !== 'none') {
                 try {
                   targetWs.send(message);
                 } catch {}
@@ -262,6 +262,23 @@ export class TourRoom {
           return;
         }
 
+        // Dynamic language switcher (for both visitor and guide)
+        if (data.type === 'set_language' && typeof data.lang === 'string') {
+          const newLang = data.lang.trim().toLowerCase();
+          connInfo.lang = newLang;
+          ws.serializeAttachment(connInfo);
+
+          if (connInfo.role === 'guide') {
+            if (newLang !== this.guideLang) {
+              this.closeAllOpenAI();
+            }
+            this.guideLang = newLang;
+          }
+
+          this.broadcastStatus();
+          return;
+        }
+
         // Guide room configuration
         if (data.type === 'config' && connInfo.role === 'guide') {
           const nextGuideLang = typeof data.nativeLanguage === 'string' ? data.nativeLanguage : this.guideLang;
@@ -270,6 +287,8 @@ export class TourRoom {
             this.closeAllOpenAI();
           }
           this.guideLang = nextGuideLang;
+          connInfo.lang = nextGuideLang;
+          ws.serializeAttachment(connInfo);
 
           if (Array.isArray(data.customGlossary)) {
             this.customGlossary = data.customGlossary.map((term: any) => {
@@ -811,7 +830,7 @@ export class TourRoom {
     }
 
     // 2. Broadcast immediately to same-language visitors
-    const sameLanguageSockets = this.state.getWebSockets(`lang:${this.guideLang}`);
+    const visitors = this.state.getWebSockets('role:visitor');
     const sameMsg = JSON.stringify({
       type: 'transcript',
       id: transcriptId,
@@ -822,9 +841,9 @@ export class TourRoom {
       hasAudio: true, // Guides raw microphone audio is streamed directly
     });
 
-    for (const ws of sameLanguageSockets) {
+    for (const ws of visitors) {
       const info = ws.deserializeAttachment() as ConnectionInfo | null;
-      if (info?.role === 'visitor' && ws.readyState === WebSocket.OPEN) {
+      if (info?.lang === this.guideLang && ws.readyState === WebSocket.OPEN) {
         try {
           ws.send(sameMsg);
         } catch {}
@@ -887,14 +906,16 @@ export class TourRoom {
 
   // Broadcast data ONLY to visitors listening in a specific language
   broadcastToLanguage(lang: string, message: string) {
-    const targetSockets = this.state.getWebSockets(`lang:${lang}`);
-    for (const ws of targetSockets) {
-      const info = ws.deserializeAttachment() as ConnectionInfo | null;
-      if (info?.role === 'visitor' && ws.readyState === WebSocket.OPEN) {
-        try {
-          ws.send(message);
-        } catch {
-          // Socket write failure
+    const visitors = this.state.getWebSockets('role:visitor');
+    for (const ws of visitors) {
+      if (ws.readyState === WebSocket.OPEN) {
+        const info = ws.deserializeAttachment() as ConnectionInfo | null;
+        if (info?.lang === lang) {
+          try {
+            ws.send(message);
+          } catch {
+            // Socket write failure
+          }
         }
       }
     }
@@ -905,19 +926,17 @@ export class TourRoom {
     const sequence = ((this.audioSequences.get(lang) || 0) + 1) >>> 0;
     this.audioSequences.set(lang, sequence);
 
-    const targetSockets = this.state.getWebSockets(`lang:${lang}`);
-    if (targetSockets.length === 0) return;
-
+    const visitors = this.state.getWebSockets('role:visitor');
     const pcmBytes = base64ToBytes(base64Data);
 
     let frame16k: ArrayBuffer | null = null;
     let frame24k: ArrayBuffer | null = null;
     let legacyMessage: string | null = null;
 
-    for (const ws of targetSockets) {
+    for (const ws of visitors) {
       if (ws.readyState !== WebSocket.OPEN) continue;
       const info = ws.deserializeAttachment() as ConnectionInfo | null;
-      if (!info || info.role !== 'visitor') continue;
+      if (!info || info.lang !== lang) continue;
 
       // Zero-audio mode: visitor chose "Solo subtítulos", saving 100% of audio bandwidth
       if (info.audioFormat === 'none') continue;

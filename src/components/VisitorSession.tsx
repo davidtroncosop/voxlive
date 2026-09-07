@@ -206,6 +206,20 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     }
   };
 
+  const handleLanguageChange = (newLang: string) => {
+    setSelectedLanguage(newLang);
+    selectedLanguageRef.current = newLang;
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'set_language',
+        lang: newLang,
+      }));
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+  };
+
   // Web Audio Context for playing audio frames
   const audioContextRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef<number>(0);
@@ -719,22 +733,33 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                 </div>
               )}
 
-              {/* Sharp High-Scale Mode Switcher (Audio vs Subtitles-Only) */}
-              <div className="mode-tabs-container">
-                <button
-                  type="button"
-                  onClick={() => handleModeChange('audio')}
-                  className={`mode-tab-btn ${audioMode === 'audio' ? 'active' : ''}`}
-                >
-                  <Headphones size={15} /> <span>Audio HD</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleModeChange('subtitles')}
-                  className={`mode-tab-btn ${audioMode === 'subtitles' ? 'active' : ''}`}
-                >
-                  <Globe size={15} /> <span>Subtítulos</span>
-                </button>
+              {/* Controls Bar: Audio vs Subtitles-Only + In-Room Language Switcher */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+                <div className="mode-tabs-container" style={{ margin: 0 }}>
+                  <button
+                    type="button"
+                    onClick={() => handleModeChange('audio')}
+                    className={`mode-tab-btn ${audioMode === 'audio' ? 'active' : ''}`}
+                  >
+                    <Headphones size={15} /> <span>Audio HD</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleModeChange('subtitles')}
+                    className={`mode-tab-btn ${audioMode === 'subtitles' ? 'active' : ''}`}
+                  >
+                    <Globe size={15} /> <span>Subtítulos</span>
+                  </button>
+                </div>
+
+                <div style={{ minWidth: '160px', maxWidth: '200px' }}>
+                  <GlassSelect
+                    value={selectedLanguage}
+                    options={SUPPORTED_LANGUAGES}
+                    onChange={handleLanguageChange}
+                    disabled={status === 'connecting'}
+                  />
+                </div>
               </div>
 
               <div className="action-box">
@@ -1015,11 +1040,16 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                 </span>
               </div>
 
-              <div className="status-row">
+              <div className="status-row" style={{ alignItems: 'center' }}>
                 <span className="status-label">Tu idioma objetivo</span>
-                <span className="status-val">
-                  {SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.flag} {SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.name}
-                </span>
+                <div style={{ width: '160px' }}>
+                  <GlassSelect
+                    value={selectedLanguage}
+                    options={SUPPORTED_LANGUAGES}
+                    onChange={handleLanguageChange}
+                    disabled={status === 'connecting'}
+                  />
+                </div>
               </div>
 
               <div className="status-row">
