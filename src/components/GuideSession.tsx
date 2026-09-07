@@ -101,8 +101,6 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
   const isRecordingRef = useRef<boolean>(false);
   const audioSequenceRef = useRef<number>(0);
   const pingTimerRef = useRef<number | null>(null);
-  const currentPhraseIdRef = useRef<string | null>(null);
-  const finalizeTimerRef = useRef<any>(null);
 
   const sendConfiguration = (ws: WebSocket) => {
     ws.send(JSON.stringify({
@@ -254,11 +252,6 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
   // Stop session
   const stopSession = () => {
     stopPingInterval();
-    if (finalizeTimerRef.current) {
-      clearTimeout(finalizeTimerRef.current);
-      finalizeTimerRef.current = null;
-    }
-    currentPhraseIdRef.current = null;
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
@@ -344,86 +337,81 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
         recognition.interimResults = true;
         recognition.lang = SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.speechCode || 'en-US';
 
+        let recognitionSessionId = Date.now();
+        const finalizedIndexes = new Set<number>();
+        let lastInterim: { id: string; text: string } | null = null;
+
         recognition.onresult = (event: any) => {
-          let interimTranscript = '';
-          let finalTranscript = '';
-
           for (let i = event.resultIndex; i < event.results.length; ++i) {
-            if (event.results[i].isFinal) {
-              finalTranscript += event.results[i][0].transcript;
-            } else {
-              interimTranscript += event.results[i][0].transcript;
-            }
-          }
+            const result = event.results[i];
+            const text = result[0]?.transcript?.trim();
+            if (!text) continue;
 
-          const currentText = (finalTranscript || interimTranscript).trim();
-          if (!currentText) return;
+            const phraseId = `p_${recognitionSessionId}_${i}`;
 
-          const isDone = Boolean(finalTranscript);
-          const phraseId = currentPhraseIdRef.current || (currentPhraseIdRef.current = 'p_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
+            if (result.isFinal) {
+              if (finalizedIndexes.has(i)) continue;
+              finalizedIndexes.add(i);
+              lastInterim = null;
 
-          // 1. Immediately update or insert in guide's local transcript list
-          setTranscripts(prev => {
-            const index = prev.findIndex(item => item.id === phraseId);
-            const newLine = {
-              id: phraseId,
-              text: currentText,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-              isFinal: isDone,
-            };
-            if (index >= 0) {
-              const updated = [...prev];
-              updated[index] = {
-                ...newLine,
-                timestamp: updated[index].timestamp || newLine.timestamp,
-              };
-              return updated;
-            }
-            return [newLine, ...prev.slice(0, 49)];
-          });
-
-          // 2. Send to server via WebSocket
-          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({
-              type: 'guide_text',
-              id: phraseId,
-              text: currentText,
-              isFinal: isDone,
-            }));
-          }
-
-          // 3. Handle phrase completion and silence debounce
-          if (isDone) {
-            currentPhraseIdRef.current = null;
-            if (finalizeTimerRef.current) {
-              clearTimeout(finalizeTimerRef.current);
-              finalizeTimerRef.current = null;
-            }
-          } else {
-            // Debounce silence timer: if guide pauses for 1.3s without browser firing isFinal, auto-finalize
-            if (finalizeTimerRef.current) clearTimeout(finalizeTimerRef.current);
-            finalizeTimerRef.current = setTimeout(() => {
-              finalizeTimerRef.current = null;
-              const pendingId = currentPhraseIdRef.current;
-              if (pendingId && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                 wsRef.current.send(JSON.stringify({
                   type: 'guide_text',
-                  id: pendingId,
-                  text: currentText,
+                  id: phraseId,
+                  text,
                   isFinal: true,
                 }));
-                setTranscripts(prev => {
-                  const idx = prev.findIndex(item => item.id === pendingId);
-                  if (idx >= 0) {
-                    const updated = [...prev];
-                    updated[idx] = { ...updated[idx], isFinal: true };
-                    return updated;
-                  }
-                  return prev;
-                });
-                currentPhraseIdRef.current = null;
               }
-            }, 1300);
+
+              setTranscripts(prev => {
+                const index = prev.findIndex(item => item.id === phraseId);
+                const newLine = {
+                  id: phraseId,
+                  text,
+                  timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+                  isFinal: true,
+                };
+                if (index >= 0) {
+                  const updated = [...prev];
+                  updated[index] = {
+                    ...newLine,
+                    timestamp: updated[index].timestamp || newLine.timestamp,
+                  };
+                  return updated;
+                }
+                return [newLine, ...prev.slice(0, 49)];
+              });
+            } else {
+              lastInterim = { id: phraseId, text };
+
+              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                wsRef.current.send(JSON.stringify({
+                  type: 'guide_text',
+                  id: phraseId,
+                  text,
+                  isFinal: false,
+                }));
+              }
+
+              setTranscripts(prev => {
+                const index = prev.findIndex(item => item.id === phraseId);
+                const newLine = {
+                  id: phraseId,
+                  text,
+                  timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+                  isFinal: false,
+                };
+                if (index >= 0) {
+                  const updated = [...prev];
+                  updated[index] = {
+                    ...newLine,
+                    timestamp: updated[index].timestamp || newLine.timestamp,
+                  };
+                  return updated;
+                }
+                return [newLine, ...prev.slice(0, 49)];
+              });
+            }
           }
         };
 
@@ -432,31 +420,30 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
         };
 
         recognition.onend = () => {
-          if (finalizeTimerRef.current) {
-            clearTimeout(finalizeTimerRef.current);
-            finalizeTimerRef.current = null;
-          }
-          if (currentPhraseIdRef.current) {
-            const pendingId = currentPhraseIdRef.current;
-            currentPhraseIdRef.current = null;
+          // If the recognition session ended with an active interim phrase, finalize it now
+          if (lastInterim && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            const { id, text } = lastInterim;
+            wsRef.current.send(JSON.stringify({
+              type: 'guide_text',
+              id,
+              text,
+              isFinal: true,
+            }));
             setTranscripts(prev => {
-              const idx = prev.findIndex(item => item.id === pendingId);
-              if (idx >= 0 && !prev[idx].isFinal) {
+              const idx = prev.findIndex(item => item.id === id);
+              if (idx >= 0) {
                 const updated = [...prev];
                 updated[idx] = { ...updated[idx], isFinal: true };
-                if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                  wsRef.current.send(JSON.stringify({
-                    type: 'guide_text',
-                    id: pendingId,
-                    text: updated[idx].text,
-                    isFinal: true,
-                  }));
-                }
                 return updated;
               }
               return prev;
             });
+            lastInterim = null;
           }
+
+          recognitionSessionId = Date.now();
+          finalizedIndexes.clear();
+
           if (isRecordingRef.current && recognitionRef.current === recognition) {
             try {
               recognition.start();
@@ -480,11 +467,6 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
   const stopAudioRecording = () => {
     isRecordingRef.current = false;
     wakeLockManager.release();
-    if (finalizeTimerRef.current) {
-      clearTimeout(finalizeTimerRef.current);
-      finalizeTimerRef.current = null;
-    }
-    currentPhraseIdRef.current = null;
     if (recorderNodeRef.current) {
       recorderNodeRef.current.disconnect();
       recorderNodeRef.current = null;

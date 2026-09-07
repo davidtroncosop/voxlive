@@ -66,6 +66,7 @@ export class TourRoom {
   openAIConnectionPromises: Map<string, Promise<OpenAIConnection | null>>;
   openAIFailedMap: Set<string>;
   audioSequences: Map<string, number>;
+  finalizedTranscriptIds: Set<string>;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -74,6 +75,7 @@ export class TourRoom {
     this.openAIConnectionPromises = new Map();
     this.openAIFailedMap = new Set();
     this.audioSequences = new Map();
+    this.finalizedTranscriptIds = new Set();
   }
 
   // Handle HTTP/WebSocket connection upgrade requests
@@ -888,7 +890,14 @@ export class TourRoom {
       return;
     }
 
-    // 4. When final: Translate to each target language
+    // 4. When final: Translate to each target language (deduplicating to prevent repeat translations)
+    if (this.finalizedTranscriptIds.has(transcriptId)) return;
+    this.finalizedTranscriptIds.add(transcriptId);
+    if (this.finalizedTranscriptIds.size > 200) {
+      const firstKey = this.finalizedTranscriptIds.keys().next().value;
+      if (firstKey) this.finalizedTranscriptIds.delete(firstKey);
+    }
+
     const otherLanguages = new Set<string>();
     for (const { info } of visitorSockets) {
       if (info.lang && info.lang !== this.guideLang) {

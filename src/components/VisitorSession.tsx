@@ -197,8 +197,6 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     if (newMode === 'subtitles') {
       setIsListening(false);
       resetPlaybackQueue();
-      speechQueueRef.current = [];
-      isSpeakingRef.current = false;
       if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         window.speechSynthesis.cancel();
       }
@@ -217,8 +215,6 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
         lang: newLang,
       }));
     }
-    speechQueueRef.current = [];
-    isSpeakingRef.current = false;
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
@@ -229,8 +225,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
   const nextStartTimeRef = useRef<number>(0);
   const gainNodeRef = useRef<GainNode | null>(null);
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
-  const speechQueueRef = useRef<SpeechSynthesisUtterance[]>([]);
-  const isSpeakingRef = useRef<boolean>(false);
+  const spokenPhraseIdsRef = useRef<Set<string>>(new Set());
 
   const stopHeartbeat = () => {
     if (heartbeatTimerRef.current !== null) {
@@ -381,9 +376,16 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
               return [newLine, ...prev.slice(0, 49)];
             });
 
-            // Simulator TTS fallback
+            // TTS playback: Speak ONLY ONCE per final translated phrase
             if (audioModeRef.current === 'audio' && !data.hasAudio && isListeningRef.current && !isMutedRef.current && newLine.isFinal && newLine.translatedText) {
-              speakText(newLine.translatedText, selectedLanguageRef.current);
+              if (!spokenPhraseIdsRef.current.has(newLine.id)) {
+                spokenPhraseIdsRef.current.add(newLine.id);
+                if (spokenPhraseIdsRef.current.size > 100) {
+                  const firstKey = spokenPhraseIdsRef.current.keys().next().value;
+                  if (firstKey) spokenPhraseIdsRef.current.delete(firstKey);
+                }
+                speakText(newLine.translatedText, selectedLanguageRef.current);
+              }
             }
           }
         } catch (e) {
@@ -463,8 +465,6 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
       wsRef.current = null;
     }
     closeAudioContext();
-    speechQueueRef.current = [];
-    isSpeakingRef.current = false;
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
@@ -588,43 +588,13 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     }
   };
 
-  const processSpeechQueue = () => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    if (speechQueueRef.current.length === 0) {
-      isSpeakingRef.current = false;
-      return;
-    }
-
-    const nextUtterance = speechQueueRef.current.shift();
-    if (!nextUtterance) {
-      isSpeakingRef.current = false;
-      return;
-    }
-
-    isSpeakingRef.current = true;
-    currentUtteranceRef.current = nextUtterance;
-
-    nextUtterance.onend = () => {
-      isSpeakingRef.current = false;
-      processSpeechQueue();
-    };
-
-    nextUtterance.onerror = (e) => {
-      console.warn('[Visitor] SpeechSynthesis error:', e);
-      isSpeakingRef.current = false;
-      processSpeechQueue();
-    };
-
-    try {
-      window.speechSynthesis.speak(nextUtterance);
-    } catch {
-      isSpeakingRef.current = false;
-      processSpeechQueue();
-    }
-  };
-
   const speakText = (text: string, langCode: string) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window) || !text.trim()) return;
+
+    // 1. Cancel ANY ongoing speech to guarantee voices NEVER overlap or talk over each other!
+    try {
+      window.speechSynthesis.cancel();
+    } catch {}
 
     const utterance = new SpeechSynthesisUtterance(text.trim());
     const selectedSpeechLang = SUPPORTED_LANGUAGES.find(l => l.code === langCode)?.speechCode || 'es-ES';
@@ -635,15 +605,19 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     if (voice) utterance.voice = voice;
 
     utterance.volume = isMutedRef.current ? 0 : volume / 100;
+    utterance.rate = 1.05;
 
-    speechQueueRef.current.push(utterance);
-    if (speechQueueRef.current.length > 5) {
-      speechQueueRef.current.shift();
-    }
+    // Retain global reference to avoid Chrome/Safari garbage-collection bug
+    (window as any).__voxliveCurrentUtterance = utterance;
 
-    if (!isSpeakingRef.current && !window.speechSynthesis.speaking) {
-      processSpeechQueue();
-    }
+    // 2. Small delay allows audio hardware to cancel the previous buffer cleanly before starting the new utterance
+    window.setTimeout(() => {
+      try {
+        window.speechSynthesis.speak(utterance);
+      } catch (e) {
+        console.warn('[Visitor] SpeechSynthesis speak error:', e);
+      }
+    }, 40);
   };
 
   useEffect(() => {
