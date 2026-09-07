@@ -822,7 +822,8 @@ export class TourRoom {
 
   // Handle speech transcript from the guide and distribute to all room listeners
   async handleGuideText(text: string, isFinal: boolean, clientTranscriptId?: string) {
-    if (!text || !text.trim()) return;
+    // Only process completed final phrases to keep transmission fast and eliminate intermediate lag
+    if (!text || !text.trim() || !isFinal) return;
     const normalizedText = this.normalizeProtectedTerms(text);
     const transcriptId = clientTranscriptId || Math.random().toString(36).slice(2);
 
@@ -857,7 +858,7 @@ export class TourRoom {
       originalText: normalizedText,
       translatedText: normalizedText,
       languageCode: this.guideLang,
-      isFinal,
+      isFinal: true,
       hasAudio: true, // Guides raw microphone audio is streamed directly
     });
 
@@ -869,28 +870,7 @@ export class TourRoom {
       }
     }
 
-    // 3. For visitors listening in OTHER languages:
-    // When NOT final (interim): broadcast immediately so live speech indicator appears in real-time as the guide speaks!
-    if (!isFinal) {
-      for (const { ws, info } of visitorSockets) {
-        if (info.lang !== this.guideLang) {
-          try {
-            ws.send(JSON.stringify({
-              type: 'transcript',
-              id: transcriptId,
-              originalText: normalizedText,
-              translatedText: '', // Kept empty while in progress so English is never shown as translated text
-              languageCode: info.lang,
-              isFinal: false,
-              hasAudio: false,
-            }));
-          } catch {}
-        }
-      }
-      return;
-    }
-
-    // 4. When final: Translate to each target language (deduplicating to prevent repeat translations)
+    // 3. When final: Translate to each target language (deduplicating to prevent repeat translations)
     if (this.finalizedTranscriptIds.has(transcriptId)) return;
     this.finalizedTranscriptIds.add(transcriptId);
     if (this.finalizedTranscriptIds.size > 200) {

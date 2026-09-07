@@ -426,6 +426,9 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
           } 
           
           else if (data.type === 'transcript') {
+            if ((!data.translatedText && !data.text && !data.originalText) || (data.isFinal === false && !data.translatedText)) {
+              return;
+            }
             const newLine: TranscriptLine = {
               id: data.id || Math.random().toString(),
               timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
@@ -1180,16 +1183,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                       )}
                       
                       <div className="bubble-text-translated">
-                        {t.translatedText ? (
-                          t.translatedText
-                        ) : !t.isFinal ? (
-                          <span style={{ opacity: 0.7, fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <span className="pulse-dot" style={{ width: 6, height: 6, backgroundColor: 'var(--blue)' }} />
-                            Traduciendo al {SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.name}...
-                          </span>
-                        ) : (
-                          t.originalText
-                        )}
+                        {t.translatedText || t.originalText}
                       </div>
                     </div>
                   ))

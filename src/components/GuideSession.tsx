@@ -395,16 +395,8 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
                 return [newLine, ...prev.slice(0, 49)];
               });
             } else {
+              // Keep local interim preview without flooding the websocket network
               lastInterim = { id: phraseId, text };
-
-              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                wsRef.current.send(JSON.stringify({
-                  type: 'guide_text',
-                  id: phraseId,
-                  text,
-                  isFinal: false,
-                }));
-              }
 
               setTranscripts(prev => {
                 const index = prev.findIndex(item => item.id === phraseId);
