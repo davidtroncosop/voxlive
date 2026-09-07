@@ -418,7 +418,7 @@ export class TourRoom {
         model: TRANSLATION_PROVIDER.apiModel,
         hostToken: this.guideHostSecret,
         message: configured
-          ? 'OpenAI TTS (Voz masculina Onyx) activo en alta definición.'
+          ? 'OpenAI Realtime Translate está configurado y activo.'
           : 'Falta configurar OPENAI_API_KEY en el servidor de Cloudflare.',
       }));
     } catch {}
@@ -440,9 +440,29 @@ export class TourRoom {
     this.openAIFailedMap.clear();
   }
 
-  async getOpenAIConnection(_targetLang: string): Promise<OpenAIConnection | null> {
-    // Suppressed in favor of single master Onyx male voice via OpenAI TTS in handleGuideText
-    return null;
+  async getOpenAIConnection(targetLang: string): Promise<OpenAIConnection | null> {
+    const apiKey = this.env.OPENAI_API_KEY || '';
+
+    if (!apiKey) {
+      console.log('[OpenAI DO] OPENAI_API_KEY is not configured.');
+      return null;
+    }
+
+    if (this.openAIFailedMap.has(targetLang)) return null;
+
+    const existing = this.openAIConnections.get(targetLang);
+    if (existing) return existing;
+
+    const pending = this.openAIConnectionPromises.get(targetLang);
+    if (pending) return pending;
+
+    const connectionPromise = this.createOpenAIConnection(targetLang, apiKey);
+    this.openAIConnectionPromises.set(targetLang, connectionPromise);
+    try {
+      return await connectionPromise;
+    } finally {
+      this.openAIConnectionPromises.delete(targetLang);
+    }
   }
 
   async createOpenAIConnection(targetLang: string, apiKey: string): Promise<OpenAIConnection | null> {
@@ -800,41 +820,6 @@ export class TourRoom {
     return text;
   }
 
-  // Generates server-side male voice audio via OpenAI TTS (Onyx)
-  async generateSpeechAudio(text: string, voice: string = 'onyx'): Promise<string | null> {
-    if (!this.env.OPENAI_API_KEY || !text.trim()) return null;
-
-    try {
-      const response = await fetch('https://api.openai.com/v1/audio/speech', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.env.OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: 'tts-1',
-          input: text.trim(),
-          voice,
-          response_format: 'pcm', // 24 kHz 16-bit raw signed PCM
-          speed: 1.05,
-        }),
-        signal: AbortSignal.timeout(6000),
-      });
-
-      if (response.ok) {
-        const pcmBuffer = await response.arrayBuffer();
-        if (pcmBuffer.byteLength > 0) {
-          return bytesToBase64(new Uint8Array(pcmBuffer));
-        }
-      } else {
-        console.warn(`[DO Room] OpenAI TTS failed (${response.status}): ${await response.text()}`);
-      }
-    } catch (err) {
-      console.error('[DO Room] OpenAI TTS error:', err);
-    }
-    return null;
-  }
-
   // Handle speech transcript from the guide and distribute to all room listeners
   async handleGuideText(text: string, isFinal: boolean, clientTranscriptId?: string) {
     if (!text || !text.trim()) return;
@@ -925,10 +910,6 @@ export class TourRoom {
         const translatedRaw = await this.translateText(normalizedText, this.guideLang, targetLang);
         const translatedText = this.normalizeProtectedTerms(translatedRaw);
 
-        // 1. Generate male voice audio on the server via OpenAI TTS (Onyx)
-        const pcmBase64 = await this.generateSpeechAudio(translatedText, 'onyx');
-        const hasAudio = Boolean(pcmBase64);
-
         const foreignMsg = JSON.stringify({
           type: 'transcript',
           id: transcriptId,
@@ -936,7 +917,7 @@ export class TourRoom {
           translatedText,
           languageCode: targetLang,
           isFinal: true,
-          hasAudio, // If true, visitor plays server-side PCM audio; if false, falls back to WebSpeech
+          hasAudio: false, // Triggers visitor client SpeechSynthesis TTS in target language
         });
 
         for (const { ws, info } of visitorSockets) {
@@ -945,11 +926,6 @@ export class TourRoom {
               ws.send(foreignMsg);
             } catch {}
           }
-        }
-
-        // 2. Broadcast the crystal-clear 24 kHz male voice audio directly to visitors
-        if (pcmBase64) {
-          this.broadcastAudioToLanguage(targetLang, pcmBase64, 24000);
         }
       } catch (err) {
         console.error(`[DO Room] Error broadcasting translation to ${targetLang}:`, err);
