@@ -515,10 +515,8 @@ export class TourRoom {
       openAIWs.send(JSON.stringify({
         type: 'session.update',
         session: {
-          voice: 'echo',
           audio: {
             output: {
-              voice: 'echo',
               language: targetLang,
             },
           },
