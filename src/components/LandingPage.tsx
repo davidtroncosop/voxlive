@@ -38,12 +38,16 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSelectRole }) => {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  const isDesktop = typeof window !== "undefined" && window.innerWidth > 768;
+
   return (
     <div className="page">
       <div className="bg">
-        <video className="bg-video" autoPlay muted loop playsInline>
-          <source src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260808_075824_7c8a2ef3-826c-43ca-81a1-162429faa306.mp4" type="video/mp4" />
-        </video>
+        {isDesktop && (
+          <video className="bg-video" autoPlay muted loop playsInline preload="metadata">
+            <source src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260808_075824_7c8a2ef3-826c-43ca-81a1-162429faa306.mp4" type="video/mp4" />
+          </video>
+        )}
         <div className="bg-overlay" />
       </div>
 

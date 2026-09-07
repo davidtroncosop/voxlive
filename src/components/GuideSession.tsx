@@ -240,11 +240,18 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
       });
       mediaStreamRef.current = stream;
 
-      // Capture native PCM16 at 24 kHz to match OpenAI Realtime directly (zero resampling latency)
-      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({
-        sampleRate: 24000,
-        latencyHint: 'interactive',
-      });
+      // Capture native PCM16 with safe fallback for mobile Safari / older WebKit
+      let audioCtx: AudioContext;
+      try {
+        audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({
+          sampleRate: 24000,
+          latencyHint: 'interactive',
+        });
+      } catch {
+        audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({
+          latencyHint: 'interactive',
+        });
+      }
       await audioCtx.resume();
       audioContextRef.current = audioCtx;
 
@@ -374,6 +381,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
   };
 
   const toggleRecording = () => {
+    try { navigator.vibrate?.(25); } catch {}
     if (isRecording) {
       stopAudioRecording();
     } else {
@@ -603,6 +611,27 @@ export const GuideSession: React.FC<GuideSessionProps> = ({ onBack, wsUrl }) => 
                 </button>
                 <div className="action-mic-label">
                   {isRecording ? 'Tu voz está siendo transmitida' : 'Micrófono apagado'}
+                </div>
+                <div className="guide-mobile-quickbar">
+                  <div className="guide-mobile-quickitem">
+                    <Users size={14} />
+                    <span><strong>{activeListeners}</strong> oyente{activeListeners !== 1 ? 's' : ''}</span>
+                  </div>
+                  <div className="guide-mobile-quickitem">
+                    <span>Sala: <strong>{roomCode}</strong></span>
+                  </div>
+                  <button 
+                    type="button" 
+                    className="guide-mobile-qr-btn"
+                    onClick={() => {
+                      try { navigator.vibrate?.(10); } catch {}
+                      setShowQrModal(true);
+                    }}
+                    aria-label="Ver código QR para oyentes"
+                  >
+                    <QrCode size={14} />
+                    <span>Ver QR</span>
+                  </button>
                 </div>
                 <p style={{ color: 'rgba(255, 255, 255, 0.75)', fontSize: '14px', maxWidth: '360px', margin: 0 }}>
                   {isRecording 

@@ -24,9 +24,9 @@ export const QRCode: React.FC<QRCodeProps> = ({
       return;
     }
 
-    // Generate high-contrast, standard ISO/IEC 18004 compliant QR Data URL
+    // Generate high-contrast, standard ISO/IEC 18004 compliant QR Data URL with optimal camera quiet zone
     QRCodeLib.toDataURL(value, {
-      margin: 1,
+      margin: 2,
       width: size * 2, // 2x for sharp rendering on Retina / high-DPI screens
       color: {
         dark: fgColor,

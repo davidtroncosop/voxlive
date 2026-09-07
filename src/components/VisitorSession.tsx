@@ -55,6 +55,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
   const [guideLang, setGuideLang] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [hasJoined, setHasJoined] = useState<boolean>(false);
+  const [isAudioSuspended, setIsAudioSuspended] = useState<boolean>(false);
   const [reconnectAttempt, setReconnectAttempt] = useState<number>(0);
   const [networkQuality, setNetworkQuality] = useState<NetworkQuality>({ rttMs: null, status: 'unknown' });
   const [droppedFrames, setDroppedFrames] = useState<number>(0);
@@ -80,20 +81,97 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     clientIdRef.current = crypto.randomUUID?.() || Math.random().toString(36).slice(2);
   }
 
-  // Keep refs in sync with state
+  // Mobile Audio Unlock Helper
+  const handleUserAudioUnlock = () => {
+    try { navigator.vibrate?.(15); } catch {}
+    if (audioContextRef.current) {
+      audioContextRef.current.resume().then(() => {
+        setIsAudioSuspended(false);
+      }).catch(() => {});
+    }
+    const langInfo = SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguageRef.current);
+    backgroundAudioManager.start({
+      title: `Traducción (${langInfo?.name || 'En Vivo'})`,
+      artist: `Voxlive · Sala ${roomCodeRef.current}`,
+      album: 'Audio HD en Vivo',
+      onPlay: () => setIsListening(true),
+      onPause: () => setIsListening(false),
+    });
+    setIsListening(true);
+  };
+
+  // Global one-time tap-to-unlock on mobile if audio is suspended after joining
+  useEffect(() => {
+    if (hasJoined && isAudioSuspended) {
+      const onTouchUnlock = () => {
+        handleUserAudioUnlock();
+      };
+      window.addEventListener('touchstart', onTouchUnlock, { passive: true, once: true });
+      window.addEventListener('click', onTouchUnlock, { passive: true, once: true });
+      return () => {
+        window.removeEventListener('touchstart', onTouchUnlock);
+        window.removeEventListener('click', onTouchUnlock);
+      };
+    }
+  }, [hasJoined, isAudioSuspended]);
+
+  // Mobile Sleep / Screen Lock / Tab-switch Recovery
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && hasJoined && shouldReconnectRef.current) {
+        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+          connectToRoom(roomCodeRef.current, selectedLanguageRef.current, true);
+        }
+        if (audioContextRef.current && audioContextRef.current.state === 'suspended' && isListeningRef.current) {
+          audioContextRef.current.resume().then(() => {
+            setIsAudioSuspended(false);
+          }).catch(() => {
+            setIsAudioSuspended(true);
+          });
+        }
+      }
+    };
+
+    const handleOnline = () => {
+      if (hasJoined && shouldReconnectRef.current && (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN)) {
+        connectToRoom(roomCodeRef.current, selectedLanguageRef.current, true);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('online', handleOnline);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('online', handleOnline);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasJoined]);
+
+  // Keep refs in sync with state and configure MediaSession
   useEffect(() => {
     isListeningRef.current = isListening;
     if (isListening) {
       if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-        audioContextRef.current.resume().catch(() => {});
+        audioContextRef.current.resume().then(() => {
+          setIsAudioSuspended(false);
+        }).catch(() => {
+          setIsAudioSuspended(true);
+        });
       }
       wakeLockManager.acquire();
-      backgroundAudioManager.start();
+      const langInfo = SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage);
+      backgroundAudioManager.start({
+        title: `Traducción (${langInfo?.name || 'En Vivo'})`,
+        artist: `Voxlive · Sala ${roomCode}`,
+        album: 'Audio HD en Vivo',
+        onPlay: () => setIsListening(true),
+        onPause: () => setIsListening(false),
+      });
     } else {
       wakeLockManager.release();
       backgroundAudioManager.stop();
     }
-  }, [isListening]);
+  }, [isListening, selectedLanguage, roomCode]);
 
   useEffect(() => {
     isMutedRef.current = isMuted;
@@ -209,9 +287,11 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
         if (firstConnection && !isReconnect && audioModeRef.current === 'audio') {
           setIsListening(true);
         }
-        audioContextRef.current?.resume().catch(() => {
+        audioContextRef.current?.resume().then(() => {
+          setIsAudioSuspended(false);
+        }).catch(() => {
           if (audioModeRef.current === 'audio') {
-            setErrorMsg('Toca “Escuchar” para activar el audio en tu dispositivo.');
+            setIsAudioSuspended(true);
           }
         });
       };
@@ -341,13 +421,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     setRoomCode(code);
     setRoomCodeInput(code);
 
-    // Add brief random jitter (0-250ms) to stagger connection requests when 450 attendees scan QR simultaneously
-    const jitter = Math.floor(Math.random() * 250);
-    window.setTimeout(() => {
-      if (shouldReconnectRef.current && roomCodeRef.current === code) {
-        connectToRoom(code, selectedLanguage, false);
-      }
-    }, jitter);
+    connectToRoom(code, selectedLanguage, false);
   };
 
   const leaveRoom = () => {
@@ -387,7 +461,13 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
         nextStartTimeRef.current = audioCtx.currentTime;
       }
       if (audioContextRef.current.state === 'suspended') {
-        audioContextRef.current.resume().catch(() => {});
+        audioContextRef.current.resume().then(() => {
+          setIsAudioSuspended(false);
+        }).catch(() => {
+          setIsAudioSuspended(true);
+        });
+      } else {
+        setIsAudioSuspended(false);
       }
     } catch (e) {
       console.error('Failed to initialize AudioContext:', e);
@@ -395,6 +475,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
   };
 
   const closeAudioContext = () => {
+    setIsAudioSuspended(false);
     if (audioContextRef.current) {
       if (audioContextRef.current.state !== 'closed') {
         audioContextRef.current.close();
@@ -646,6 +727,22 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
               </div>
 
               <div className="action-box">
+                {isAudioSuspended && audioMode === 'audio' && (
+                  <div 
+                    className="mobile-unmute-banner"
+                    onClick={handleUserAudioUnlock}
+                    role="button"
+                    tabIndex={0}
+                  >
+                    <div className="mobile-unmute-pulse">
+                      <Volume2 size={20} />
+                    </div>
+                    <div className="mobile-unmute-text">
+                      <strong>Toca para activar audio en vivo</strong>
+                      <span>Pulsa en cualquier parte de la pantalla para empezar a escuchar</span>
+                    </div>
+                  </div>
+                )}
                 {audioMode === 'subtitles' ? (
                   <div style={{ padding: '24px 16px', textAlign: 'center' }}>
                     <div style={{
@@ -959,10 +1056,13 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
           <div className="mobile-bottom-dock">
             <button
               type="button"
-              className={`mobile-dock-btn ${isListening ? 'mobile-dock-btn--primary' : ''}`}
+              className={`mobile-dock-btn ${isListening && !isAudioSuspended ? 'mobile-dock-btn--primary' : 'mobile-dock-btn--highlight'}`}
               onClick={() => {
+                try { navigator.vibrate?.(15); } catch {}
                 if (audioMode === 'subtitles') {
                   handleModeChange('audio');
+                } else if (isAudioSuspended) {
+                  handleUserAudioUnlock();
                 } else {
                   setIsListening(!isListening);
                 }
@@ -972,13 +1072,17 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                 <>
                   <Headphones size={16} /> <span>Activar Voz</span>
                 </>
+              ) : isAudioSuspended ? (
+                <>
+                  <Volume2 size={16} /> <span>Activar Audio</span>
+                </>
               ) : isListening ? (
                 <>
-                  <Square size={14} fill="currentColor" /> <span>Pausar Audio</span>
+                  <Square size={14} fill="currentColor" /> <span>Pausar</span>
                 </>
               ) : (
                 <>
-                  <Play size={14} fill="currentColor" /> <span>Escuchar Audio</span>
+                  <Play size={14} fill="currentColor" /> <span>Escuchar</span>
                 </>
               )}
             </button>
@@ -986,7 +1090,10 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
             <button
               type="button"
               className="mobile-dock-btn"
-              onClick={() => handleModeChange(audioMode === 'audio' ? 'subtitles' : 'audio')}
+              onClick={() => {
+                try { navigator.vibrate?.(10); } catch {}
+                handleModeChange(audioMode === 'audio' ? 'subtitles' : 'audio');
+              }}
               title="Cambiar entre Audio HD y Solo Subtítulos"
             >
               {audioMode === 'audio' ? <Globe size={16} /> : <Headphones size={16} />}
@@ -996,10 +1103,26 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
             <button
               type="button"
               className="mobile-dock-btn"
-              onClick={() => setIsMuted(!isMuted)}
+              onClick={() => {
+                try { navigator.vibrate?.(10); } catch {}
+                setIsMuted(!isMuted);
+              }}
               title={isMuted ? 'Desmutear' : 'Silenciar'}
             >
               {isMuted || volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
+            </button>
+
+            <button
+              type="button"
+              className="mobile-dock-btn mobile-dock-btn--danger"
+              onClick={() => {
+                try { navigator.vibrate?.(15); } catch {}
+                leaveRoom();
+              }}
+              title="Salir de la Sala"
+            >
+              <Square size={14} fill="currentColor" />
+              <span>Salir</span>
             </button>
           </div>
         </div>

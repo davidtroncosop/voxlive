@@ -1,0 +1,19 @@
+﻿{
+  "name": "Voxlive — Traducción de Voz en Tiempo Real",
+  "short_name": "Voxlive",
+  "description": "Traducción simultánea de voz a voz y subtítulos en vivo en múltiples idiomas.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#060911",
+  "theme_color": "#060911",
+  "categories": ["utilities", "productivity", "education"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

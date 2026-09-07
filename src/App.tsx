@@ -1,32 +1,37 @@
-import { useState, useEffect } from "react";
-import LandingPage from "./components/LandingPage";
-import GuideSession from "./components/GuideSession";
-import VisitorSession from "./components/VisitorSession";
+import { useState, lazy, Suspense } from "react";
 import type { UserRole } from "./types";
 
-function App() {
-  const [role, setRole] = useState<UserRole>(null);
-  const [initialRoomCode, setInitialRoomCode] = useState<string>("");
-  const [initialLang, setInitialLang] = useState<string>("es");
+const LandingPage = lazy(() => import("./components/LandingPage"));
+const GuideSession = lazy(() => import("./components/GuideSession"));
+const VisitorSession = lazy(() => import("./components/VisitorSession"));
 
-  // Check URL query parameters for deep linking or QR code scan (?room=1234&lang=es)
-  useEffect(() => {
+function App() {
+  const [role, setRole] = useState<UserRole>(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const roomParam = params.get("room") || params.get("join");
-      const langParam = params.get("lang");
       const roleParam = params.get("role");
-
-      if (langParam) setInitialLang(langParam);
-
-      if (roomParam) {
-        setInitialRoomCode(roomParam.toUpperCase());
-        setRole(roleParam === "guide" ? "guide" : "visitor");
-      } else if (roleParam === "guide" || roleParam === "visitor") {
-        setRole(roleParam);
-      }
+      if (roomParam) return roleParam === "guide" ? "guide" : "visitor";
+      if (roleParam === "guide" || roleParam === "visitor") return roleParam;
     }
-  }, []);
+    return null;
+  });
+
+  const [initialRoomCode, setInitialRoomCode] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      return (params.get("room") || params.get("join") || "").toUpperCase();
+    }
+    return "";
+  });
+
+  const [initialLang] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("lang") || "es";
+    }
+    return "es";
+  });
 
   // Dynamic Cloudflare Worker WebSocket Server URL detection
   const getWsUrl = () => {
@@ -57,15 +62,16 @@ function App() {
   };
 
   if (role === null) {
-    return <LandingPage onSelectRole={handleSelectRole} />;
+    return (
+      <Suspense fallback={<div className="page" />}>
+        <LandingPage onSelectRole={handleSelectRole} />
+      </Suspense>
+    );
   }
 
   return (
     <div className="session-container">
       <div className="bg">
-        <video className="bg-video" autoPlay muted loop playsInline>
-          <source src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260808_075824_7c8a2ef3-826c-43ca-81a1-162429faa306.mp4" type="video/mp4" />
-        </video>
         <div className="bg-overlay" />
       </div>
 
@@ -92,18 +98,20 @@ function App() {
       </header>
 
       <main className="session-content">
-        {role === "guide" && (
-          <GuideSession onBack={handleBackToHome} wsUrl={wsUrl} />
-        )}
-        
-        {role === "visitor" && (
-          <VisitorSession 
-            onBack={handleBackToHome} 
-            wsUrl={wsUrl} 
-            initialRoomCode={initialRoomCode}
-            initialLang={initialLang}
-          />
-        )}
+        <Suspense fallback={<div className="empty-state"><p>Cargando sala...</p></div>}>
+          {role === "guide" && (
+            <GuideSession onBack={handleBackToHome} wsUrl={wsUrl} />
+          )}
+          
+          {role === "visitor" && (
+            <VisitorSession 
+              onBack={handleBackToHome} 
+              wsUrl={wsUrl} 
+              initialRoomCode={initialRoomCode}
+              initialLang={initialLang}
+            />
+          )}
+        </Suspense>
       </main>
     </div>
   );
