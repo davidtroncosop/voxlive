@@ -42,6 +42,7 @@ export interface RoomStatusUpdate {
   guideLanguage?: string;
   hasActiveGuide?: boolean;
   translationProvider?: string;
+  voice?: string;
   timestamp?: number;
 }
 

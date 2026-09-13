@@ -7,12 +7,18 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:opus": "wrangler deploy --dry-run --config worker/wrangler.toml --outdir .tmp/opus-worker && node --experimental-strip-types --test tests/opus-stream.test.mjs",
+    "test:recovery": "wrangler deploy --dry-run --config worker/wrangler.toml --outdir .tmp/opus-worker && node --experimental-strip-types --test tests/guide-recovery.test.mjs",
+    "test:fish": "wrangler deploy --dry-run --config worker/wrangler.toml --outdir .tmp/opus-worker && node --experimental-strip-types --test tests/fish-opus.test.mjs",
+    "test:audio": "wrangler deploy --dry-run --config worker/wrangler.toml --outdir .tmp/opus-worker && node --experimental-strip-types --test tests/audio-optimizations.test.mjs tests/opus-stream.test.mjs tests/fish-opus.test.mjs tests/guide-recovery.test.mjs",
+    "test:audio-load": "wrangler deploy --dry-run --config worker/wrangler.toml --outdir .tmp/opus-worker && node --experimental-strip-types --test tests/audio-load.test.mjs",
+    "test:rooms": "wrangler deploy --dry-run --config worker/wrangler.toml --outdir .tmp/opus-worker && node --experimental-strip-types --test --test-timeout=15000 tests/room-creation.test.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.23.0",
     "opus-decoder": "^0.7.11",
-    "opusscript": "^0.1.1",
+    "opusscript": "0.1.1",
     "qrcode": "^1.5.4",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
@@ -27,6 +33,7 @@
     "oxlint": "^1.71.0",
     "typescript": "~6.0.2",
     "vite": "^8.1.1",
-    "wrangler": "^4.110.0"
+    "wrangler": "^4.110.0",
+    "miniflare": "4.20260708.1"
   }
 }

@@ -13,19 +13,20 @@ import {
   Plus, 
   Trash2, 
   Wifi, 
-  Cpu,
   Square,
-  Tv 
+  Tv,
+  Volume2
 } from 'lucide-react';
 import { SUPPORTED_LANGUAGES } from '../types';
 import type { ConnectionStatus, CustomGlossaryTerm, NetworkQuality } from '../types';
-import { TRANSLATION_PROVIDER } from '../../shared/translationProvider';
+import { TRANSLATION_PROVIDER, LIVE_VOICE_OPTIONS, getVoiceById } from '../../shared/translationProvider';
 import { createAudioFrameFromBytes } from '../../shared/audioProtocol';
 import { createAudioRecorderNode } from '../utils/audioWorklet';
 import { wakeLockManager } from '../utils/wakeLock';
 import QRCode from './QRCode';
 import Visualizer from './Visualizer';
 import { GlassSelect } from './GlassSelect';
+import { VoiceSelect } from './VoiceSelect';
 
 interface GuideSessionProps {
   onBack: () => void;
@@ -53,23 +54,27 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
   const [hasStarted, setHasStarted] = useState<boolean>(false);
   const [roomCode, setRoomCode] = useState<string>(() => {
     if (initialRoomCode) return initialRoomCode.trim().toUpperCase();
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('voxlive_guide_room_code') || '';
-    }
     return '';
   });
-  const [hostToken, setHostToken] = useState<string>('');
+  const [guidePassword, setGuidePassword] = useState('');
   const [activeListeners, setActiveListeners] = useState<number>(0);
   const [audioListeners, setAudioListeners] = useState<number>(0);
   const [textOnlyListeners, setTextOnlyListeners] = useState<number>(0);
   const [langCounts, setLangCounts] = useState<Record<string, number>>({});
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [transcripts, setTranscripts] = useState<{ id: string; text: string; timestamp: string; isFinal?: boolean }[]>([]);
+  const [playbackHealth, setPlaybackHealth] = useState<{ reporting: number; totalUnderruns: number; maxQueuedMs: number } | null>(null);
   const [providerReady, setProviderReady] = useState<boolean | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState<string>(initialLang || 'en');
+  const [selectedVoice, setSelectedVoice] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('voxlive_selected_voice') || TRANSLATION_PROVIDER.defaultVoice;
+    }
+    return TRANSLATION_PROVIDER.defaultVoice;
+  });
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [dbLevel, setDbLevel] = useState<number>(0);
-  const [audioMode, setAudioMode] = useState<'worklet' | 'scriptProcessor'>('worklet');
+  const [, setAudioMode] = useState<'worklet' | 'scriptProcessor'>('worklet');
   const [networkQuality, setNetworkQuality] = useState<NetworkQuality>({ rttMs: null, status: 'unknown' });
   const [showQrModal, setShowQrModal] = useState<boolean>(false);
   const [isProjectorMode, setIsProjectorMode] = useState<boolean>(false);
@@ -80,6 +85,22 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
   const [glossaryTerms, setGlossaryTerms] = useState<CustomGlossaryTerm[]>([]);
   const [newTermCanonical, setNewTermCanonical] = useState<string>('');
   const [showGlossaryModal, setShowGlossaryModal] = useState<boolean>(false);
+
+  const handleVoiceChange = (newVoice: string) => {
+    setSelectedVoice(newVoice);
+    try {
+      localStorage.setItem('voxlive_selected_voice', newVoice);
+    } catch {}
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'config',
+        provider: TRANSLATION_PROVIDER.id,
+        nativeLanguage: selectedLanguage,
+        customGlossary: glossaryTerms,
+        voice: newVoice,
+      }));
+    }
+  };
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -93,7 +114,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isProjectorMode, showQrModal, showGlossaryModal]);
 
-  // Recover speech recognition when tab returns to foreground on mobile devices
+  // Restart recognition if user switches tabs to prevent browser dropping it
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === 'visible' && isRecordingRef.current && recognitionRef.current) {
@@ -121,6 +142,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
       provider: TRANSLATION_PROVIDER.id,
       nativeLanguage: selectedLanguage,
       customGlossary: glossaryTerms,
+      voice: selectedVoice,
     }));
   };
 
@@ -142,9 +164,10 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
 
   // Create room and initialize WebSocket
   // Create room or reconnect to existing room and initialize WebSocket
-  const startSession = async () => {
+  const startSession = async (createNew = true, candidate?: string, attempt = 0) => {
+    if (!guidePassword) { setErrorMsg('Ingresa la clave de guía.'); return; }
     try {
-      const cleanCode = roomCode.trim().toUpperCase() || generateCleanRoomCode();
+      const cleanCode = candidate || roomCode.trim().toUpperCase() || generateCleanRoomCode();
       setRoomCode(cleanCode);
       try {
         localStorage.setItem('voxlive_guide_room_code', cleanCode);
@@ -154,21 +177,20 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
       setProviderReady(null);
       setErrorMsg('');
 
-      const existingToken = hostToken || 
-        sessionStorage.getItem(`hostToken_${cleanCode}`) || 
-        localStorage.getItem(`hostToken_${cleanCode}`) || '';
-      const socketUrl = `${wsUrl}/ws/room/${cleanCode}?role=guide&lang=${selectedLanguage}&audio=binary&hostToken=${encodeURIComponent(existingToken)}`;
+      const socketUrl = `${wsUrl}/ws/room/${cleanCode}?role=guide&lang=${selectedLanguage}&audio=binary&create=${createNew ? 1 : 0}&hostToken=${encodeURIComponent(guidePassword)}`;
       const ws = new WebSocket(socketUrl);
       ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
 
       ws.onopen = () => {
+        if (wsRef.current !== ws) return;
         setStatus('connected');
         sendConfiguration(ws);
         startPingInterval(ws);
       };
 
       ws.onmessage = (event) => {
+        if (wsRef.current !== ws) return;
         try {
           if (typeof event.data !== 'string') return;
           const data = JSON.parse(event.data);
@@ -183,29 +205,32 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
             return;
           }
 
-          if (data.type === 'status_update') {
+          if (data.type === 'playback_health') {
+            setPlaybackHealth({ reporting: data.reporting || 0, totalUnderruns: data.totalUnderruns || 0, maxQueuedMs: data.maxQueuedMs || 0 });
+          } else if (data.type === 'status_update') {
             setActiveListeners(data.listenersCount || 0);
             if (typeof data.audioListeners === 'number') setAudioListeners(data.audioListeners);
             if (typeof data.textOnlyListeners === 'number') setTextOnlyListeners(data.textOnlyListeners);
             if (data.langCounts) setLangCounts(data.langCounts);
+            if (typeof data.voice === 'string' && data.voice) setSelectedVoice(data.voice);
           } else if (data.type === 'provider_status') {
             const ready = Boolean(data.configured);
             setProviderReady(ready);
-            if (data.hostToken) {
-              setHostToken(data.hostToken);
-              try {
-                sessionStorage.setItem(`hostToken_${cleanCode}`, data.hostToken);
-                localStorage.setItem(`hostToken_${cleanCode}`, data.hostToken);
-              } catch {}
-            }
+            if (typeof data.voice === 'string' && data.voice) setSelectedVoice(data.voice);
             if (!ready) {
               setErrorMsg(data.message || 'El motor seleccionado no tiene una API key configurada en el servidor.');
             } else {
               setErrorMsg('');
             }
+          } else if (data.type === 'translation_recovered') {
+            const pending = Array.isArray(data.recoveringLanguages) ? data.recoveringLanguages : [];
+            setProviderReady(pending.length === 0);
+            setErrorMsg(pending.length ? `Reconectando traducción: ${pending.join(', ')}.` : '');
+          } else if (data.type === 'error') {
+            setErrorMsg(data.message || 'No se pudo entrar como guía.');
           } else if (data.type === 'translation_warning') {
             setProviderReady(false);
-            setErrorMsg(data.message || 'GPT Realtime Translate no está disponible.');
+            setErrorMsg(data.message || 'GPT Live 1 no está disponible.');
           } else if (data.type === 'transcript') {
             const lineId = data.id || Math.random().toString();
             setTranscripts(prev => {
@@ -234,21 +259,35 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
       };
 
       ws.onerror = (e) => {
+        if (wsRef.current !== ws) return;
         console.error('[Guide] WebSocket error:', e);
         if (status !== 'connected') {
           setHasStarted(false);
         }
         setStatus('error');
-        setErrorMsg('Error al conectar con el servidor de Cloudflare.');
+        setErrorMsg('No pudimos conectar con la sala. Comprueba tu conexión e inténtalo de nuevo.');
       };
 
       ws.onclose = (e) => {
+        if (wsRef.current !== ws) return;
         stopPingInterval();
+        if (e.code === 4004 && createNew) {
+          if (attempt < 8) {
+            void startSession(true, generateCleanRoomCode(), attempt + 1);
+          } else {
+            setHasStarted(false);
+            setStatus('error');
+            setErrorMsg('No pudimos encontrar una sala libre. Inténtalo nuevamente.');
+          }
+          return;
+        }
         setStatus('disconnected');
         setIsRecording(false);
         stopAudioRecording();
         if (e.code === 4003) {
-          setErrorMsg('La sala ya tiene otro guía activo.');
+          setHasStarted(false);
+          setStatus('error');
+          setErrorMsg('Clave de guía incorrecta. Inténtalo nuevamente.');
         } else {
           setErrorMsg('Conexión con la sala interrumpida. Puedes reconectarte en cualquier momento.');
         }
@@ -599,7 +638,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
             <div className="setup-title-group">
               <h2 className="setup-title">Crear una Sesión</h2>
               <p className="setup-subtitle">
-                Configura tu idioma nativo y crea una sala de transmisión en tiempo real con baja latencia.
+                Elige el idioma en el que hablarás y comparte tu sala con los asistentes.
               </p>
             </div>
 
@@ -614,7 +653,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
               <div className="form-group">
                 <div className="setup-field-header">
                   <label className="setup-field-label">
-                    Código de Sala <span className="setup-optional">(Opcional para reanudar)</span>
+                    Código de Sala <span className="setup-optional">(opcional)</span>
                   </label>
                 </div>
                 <input
@@ -627,8 +666,23 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
                   disabled={status === 'connecting'}
                 />
                 <p style={{ fontSize: '11px', color: 'rgba(255, 255, 255, 0.55)', margin: '4px 0 0' }}>
-                  Si te desconectaste o cerraste la ventana, ingresa el código anterior para reanudar la transmisión.
+                  Déjalo vacío para generar un código. Si la sala está ocupada, crearemos otra automáticamente.
                 </p>
+              </div>
+
+              <div className="form-group">
+                <label className="setup-field-label" htmlFor="guide-password">Clave de guía</label>
+                <input
+                  id="guide-password"
+                  type="password"
+                  className="setup-text-input"
+                  autoComplete="current-password"
+                  placeholder="Ingresa la clave para transmitir"
+                  value={guidePassword}
+                  onChange={(e) => setGuidePassword(e.target.value)}
+                  disabled={status === 'connecting'}
+                  required
+                />
               </div>
 
               <div className="form-group">
@@ -637,6 +691,19 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
                   value={selectedLanguage}
                   options={SUPPORTED_LANGUAGES}
                   onChange={setSelectedLanguage}
+                  disabled={status === 'connecting'}
+                />
+              </div>
+
+              <div className="form-group">
+                <div className="setup-field-header">
+                  <label className="setup-field-label">Voz de la IA (Traducción)</label>
+                  <span className="setup-counter">GPT Live 1</span>
+                </div>
+                <VoiceSelect
+                  value={selectedVoice}
+                  options={LIVE_VOICE_OPTIONS}
+                  onChange={handleVoiceChange}
                   disabled={status === 'connecting'}
                 />
               </div>
@@ -696,14 +763,12 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
               <button
                 type="button"
                 className="btn btn--nav setup-submit-btn"
-                onClick={startSession}
+                onClick={() => startSession(true)}
                 disabled={status === 'connecting'}
               >
                 <span className="btn__label">
                   {status === 'connecting'
                     ? 'Conectando...'
-                    : roomCode.trim()
-                    ? 'Reanudar Sala (Emisor)'
                     : 'Crear y Transmitir'}
                 </span>
                 <span className="btn__icon">
@@ -734,6 +799,15 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
                       disabled={status === 'connecting'}
                     />
                   </div>
+                  <div style={{ minWidth: '160px' }}>
+                    <VoiceSelect
+                      value={selectedVoice}
+                      options={LIVE_VOICE_OPTIONS}
+                      onChange={handleVoiceChange}
+                      compact={true}
+                      disabled={status === 'connecting'}
+                    />
+                  </div>
                   <div className="room-code-plain">
                     Sala: <span className="room-code-value">{roomCode}</span>
                   </div>
@@ -760,7 +834,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
               {status === 'connecting' && (
                 <div className="connection-banner connection-banner--connecting" style={{ marginBottom: '20px' }}>
                   <span className="pulse-dot" style={{ backgroundColor: '#38bdf8', width: 7, height: 7 }}></span>
-                  <span>Conectando con la sala en Cloudflare Edge...</span>
+                  <span>Conectando con tu sala…</span>
                 </div>
               )}
 
@@ -773,7 +847,7 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
                   <button
                     type="button"
                     className="btn btn--nav"
-                    onClick={startSession}
+                    onClick={() => startSession(false)}
                     style={{ height: '32px', padding: '0 14px', fontSize: '12px' }}
                   >
                     <span className="btn__label">Reconectar a la Sala</span>
@@ -928,35 +1002,35 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
               <div className="status-card-header">
                 <h3 className="status-card-title">Estado de la Transmisión</h3>
                 <span className="status-indicator-badge">
-                  <span className="status-dot-green"></span> En Línea
+                  {status === 'connected' ? 'Conectado' : status === 'connecting' ? 'Conectando…' : 'Sin conexión'}
                 </span>
               </div>
               
               <div className="status-row">
-                <span className="status-label">Servidor</span>
+                <span className="status-label">Conexión</span>
                 <span className="status-val status-val--success">
-                  <CheckCircle2 size={14} /> Cloudflare Edge
+                  <CheckCircle2 size={14} /> {status === 'connected' ? 'Sala conectada' : 'Esperando conexión'}
                 </span>
               </div>
 
               <div className="status-row">
-                <span className="status-label">Latencia (RTT)</span>
+                <span className="status-label">Respuesta de la red</span>
                 <span className="status-val status-val--highlight">
                   <Wifi size={14} /> {networkQuality.rttMs ? `${networkQuality.rttMs} ms` : 'Midiendo...'}
                 </span>
               </div>
 
               <div className="status-row">
-                <span className="status-label">Motor de Audio</span>
-                <span className="status-val" style={{ fontSize: '12px' }}>
-                  <Cpu size={14} /> {audioMode === 'worklet' ? 'AudioWorklet (Zero Glitch)' : 'ScriptProcessor'}
+                <span className="status-label">Traducción</span>
+                <span className="status-val">
+                  {providerReady === false ? 'Reconectando…' : providerReady === true ? 'Lista' : 'En espera'}
                 </span>
               </div>
 
               <div className="status-row">
-                <span className="status-label">API de IA</span>
-                <span className="status-val" style={{ color: providerReady === false ? '#ef4444' : undefined }}>
-                  {TRANSLATION_PROVIDER.model}
+                <span className="status-label">Voz de traducción</span>
+                <span className="status-val" style={{ fontWeight: 600 }}>
+                  <Volume2 size={14} /> {getVoiceById(selectedVoice).name}
                 </span>
               </div>
 
@@ -966,6 +1040,14 @@ export const GuideSession: React.FC<GuideSessionProps> = ({
                   <Users size={16} /> {activeListeners}
                 </span>
               </div>
+
+              {playbackHealth && playbackHealth.reporting > 0 && (
+                <div className="status-subbox" aria-live="polite" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '6px' }}>
+                  <span>Audio informado: <strong>{playbackHealth.reporting} oyentes</strong></span>
+                  <span>Interrupciones acumuladas: <strong>{playbackHealth.totalUnderruns}</strong></span>
+                  <span>Mayor audio en espera: <strong>{Math.round(playbackHealth.maxQueuedMs)} ms</strong></span>
+                </div>
+              )}
 
               {activeListeners > 0 && (
                 <div className="status-subbox">

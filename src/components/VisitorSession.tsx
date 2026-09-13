@@ -10,19 +10,18 @@ import {
   AlertCircle, 
   CheckCircle2, 
   Wifi, 
-  Shield, 
-  Cpu 
 } from 'lucide-react';
 import { SUPPORTED_LANGUAGES } from '../types';
 import type { ConnectionStatus, TranscriptLine, NetworkQuality, AudioMode } from '../types';
+import { AdaptiveAudioBuffer } from '../utils/adaptiveAudioBuffer';
+import { OpusPlayback } from '../utils/opusPlayback';
 import { base64ToBytes, decodeAudioFrame } from '../../shared/audioProtocol';
+import { getVoiceById } from '../../shared/translationProvider';
 import { wakeLockManager } from '../utils/wakeLock';
 import { backgroundAudioManager } from '../utils/backgroundAudio';
 import Visualizer from './Visualizer';
 import { GlassSelect } from './GlassSelect';
 
-const MIN_JITTER_BUFFER_SECONDS = 0.035;
-const MAX_QUEUED_AUDIO_SECONDS = 1.5;
 const RECONNECT_MAX_DELAY_MS = 10_000;
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const HEARTBEAT_TIMEOUT_MS = 35_000;
@@ -77,7 +76,12 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
   const [networkQuality, setNetworkQuality] = useState<NetworkQuality>({ rttMs: null, status: 'unknown' });
   const [droppedFrames, setDroppedFrames] = useState<number>(0);
   const [fontSizeMode, setFontSizeMode] = useState<'normal' | 'large' | 'xlarge'>('normal');
+  const [roomVoice, setRoomVoice] = useState<string>('marin');
 
+  const adaptiveBufferRef = useRef(new AdaptiveAudioBuffer());
+  const playingSourcesRef = useRef(new Set<AudioBufferSourceNode>());
+  const opusRef = useRef<OpusPlayback | null>(null);
+  const audioTransportRef = useRef<'opus' | 'binary'>('opus');
   const wsRef = useRef<WebSocket | null>(null);
   const isListeningRef = useRef<boolean>(false);
   const audioModeRef = useRef<AudioMode>('audio');
@@ -132,7 +136,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     backgroundAudioManager.start({
       title: `Traducción (${langInfo?.name || 'En Vivo'})`,
       artist: `Voxlive · Sala ${roomCodeRef.current}`,
-      album: 'Audio HD en Vivo',
+      album: 'Audio en Vivo',
       onPlay: () => {
         isListeningRef.current = true;
         setIsListening(true);
@@ -223,7 +227,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
       backgroundAudioManager.start({
         title: `Traducción (${langInfo?.name || 'En Vivo'})`,
         artist: `Voxlive · Sala ${roomCode}`,
-        album: 'Audio HD en Vivo',
+        album: 'Audio en Vivo',
         onPlay: () => setIsListening(true),
         onPause: () => setIsListening(false),
       });
@@ -251,7 +255,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'set_audio_mode',
-        audio: newMode === 'subtitles' ? 'none' : 'binary',
+        audio: newMode === 'subtitles' ? 'none' : audioTransportRef.current,
       }));
     }
     if (newMode === 'subtitles') {
@@ -269,6 +273,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
   const handleLanguageChange = (newLang: string) => {
     setSelectedLanguage(newLang);
     selectedLanguageRef.current = newLang;
+    resetPlaybackQueue();
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'set_language',
@@ -282,7 +287,6 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
 
   // Web Audio Context for playing audio frames
   const audioContextRef = useRef<AudioContext | null>(null);
-  const nextStartTimeRef = useRef<number>(0);
   const gainNodeRef = useRef<GainNode | null>(null);
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const spokenPhraseIdsRef = useRef<Set<string>>(new Set());
@@ -306,7 +310,11 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
         ws.close(4000, 'Heartbeat timeout');
         return;
       }
-      ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
+      ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now(), audioStats: {
+        underruns: adaptiveBufferRef.current.underruns,
+        dropped: droppedAudioChunksRef.current + adaptiveBufferRef.current.resets,
+        queuedMs: Math.max(0, (adaptiveBufferRef.current.nextStart - (audioContextRef.current?.currentTime || 0)) * 1000),
+      } }));
     }, HEARTBEAT_INTERVAL_MS);
   };
 
@@ -317,8 +325,15 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     }
   };
 
+  const stopQueuedSources = () => {
+    for (const source of playingSourcesRef.current) { try { source.stop(); source.disconnect(); } catch {} }
+    playingSourcesRef.current.clear();
+  };
+
   const resetPlaybackQueue = () => {
-    nextStartTimeRef.current = 0;
+    stopQueuedSources();
+    opusRef.current?.reset();
+    adaptiveBufferRef.current.reset();
     lastAudioSequenceRef.current = null;
   };
 
@@ -344,12 +359,29 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
 
   const connectToRoom = (code: string, language: string, isReconnect: boolean) => {
     try {
+      opusRef.current?.dispose();
+      opusRef.current = null;
       const cleanCode = code.trim().toUpperCase();
-      const audioParam = audioModeRef.current === 'subtitles' ? 'none' : 'binary';
+      const audioParam = audioModeRef.current === 'subtitles' ? 'none' : audioTransportRef.current;
       const socketUrl = `${wsUrl}/ws/room/${encodeURIComponent(cleanCode)}?role=visitor&lang=${language}&audio=${audioParam}&client=${encodeURIComponent(clientIdRef.current)}`;
       const ws = new WebSocket(socketUrl);
       ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
+      const createDecoder = () => new OpusPlayback((samples, rate) => {
+        if (wsRef.current === ws && audioModeRef.current === 'audio' && isListeningRef.current && !isMutedRef.current) {
+          playFloatSamples(samples, rate);
+        }
+      }, () => {
+        if (wsRef.current !== ws) return;
+        audioTransportRef.current = 'binary';
+        opusRef.current?.dispose();
+        opusRef.current = null;
+        lastAudioSequenceRef.current = null;
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({
+          type: 'set_audio_mode', audio: audioModeRef.current === 'subtitles' ? 'none' : 'binary',
+        }));
+      });
+      if (audioTransportRef.current === 'opus') opusRef.current = createDecoder();
 
       ws.onopen = () => {
         if (wsRef.current !== ws) return;
@@ -362,6 +394,10 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
         setErrorMsg('');
         resetPlaybackQueue();
         startHeartbeat(ws);
+        // Decoder initialization can fail before the socket opens.
+        if (audioTransportRef.current === 'binary') ws.send(JSON.stringify({
+          type: 'set_audio_mode', audio: audioModeRef.current === 'subtitles' ? 'none' : 'binary',
+        }));
         if (firstConnection && !isReconnect && audioModeRef.current === 'audio') {
           isListeningRef.current = true;
           setIsListening(true);
@@ -376,16 +412,20 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
       };
 
       ws.onmessage = (event) => {
+        if (wsRef.current !== ws) return;
         try {
           if (event.data instanceof ArrayBuffer) {
             hasReceivedServerAudioRef.current = true;
-            if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+            if (typeof window !== 'undefined' && 'speechSynthesis' in window && window.speechSynthesis.speaking) {
               try { window.speechSynthesis.cancel(); } catch {}
             }
             const audioFrame = decodeAudioFrame(event.data);
+            adaptiveBufferRef.current.arrival(audioFrame.sentAt, Date.now());
             trackAudioSequence(audioFrame.sequence);
 
-            if (audioModeRef.current === 'audio' && isListeningRef.current && !isMutedRef.current) {
+            if (audioFrame.codec === 'opus') {
+              opusRef.current?.push(audioFrame.payloadBytes);
+            } else if (audioModeRef.current === 'audio' && isListeningRef.current && !isMutedRef.current) {
               playPcmBytes(audioFrame.pcmBytes, audioFrame.sampleRate);
             }
             return;
@@ -412,11 +452,14 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
             if (data.guideLanguage) {
               setGuideLang(data.guideLanguage);
             }
+            if (typeof data.voice === 'string' && data.voice) {
+              setRoomVoice(data.voice);
+            }
           } 
           
           else if (data.type === 'audio_chunk') {
             hasReceivedServerAudioRef.current = true;
-            if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+            if (typeof window !== 'undefined' && 'speechSynthesis' in window && window.speechSynthesis.speaking) {
               try { window.speechSynthesis.cancel(); } catch {}
             }
             if (typeof data.sequence === 'number') trackAudioSequence(data.sequence);
@@ -479,6 +522,8 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
       ws.onclose = () => {
         if (wsRef.current !== ws) return;
         wsRef.current = null;
+        opusRef.current?.dispose();
+        opusRef.current = null;
         stopHeartbeat();
         resetPlaybackQueue();
 
@@ -538,6 +583,8 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     stopHeartbeat();
     wakeLockManager.release();
     backgroundAudioManager.stop();
+    opusRef.current?.dispose();
+    opusRef.current = null;
     if (wsRef.current) {
       wsRef.current.onclose = null;
       wsRef.current.close();
@@ -567,7 +614,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
 
         audioContextRef.current = audioCtx;
         gainNodeRef.current = gainNode;
-        nextStartTimeRef.current = audioCtx.currentTime;
+        adaptiveBufferRef.current.reset();
       }
       if (audioContextRef.current.state === 'suspended') {
         audioContextRef.current.resume().then(() => {
@@ -592,7 +639,8 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
       audioContextRef.current = null;
       gainNodeRef.current = null;
     }
-    nextStartTimeRef.current = 0;
+    stopQueuedSources();
+    adaptiveBufferRef.current.reset();
     lastAudioSequenceRef.current = null;
     droppedAudioChunksRef.current = 0;
     setDroppedFrames(0);
@@ -611,27 +659,21 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
     lastAudioSequenceRef.current = sequence;
   };
 
-  // Play direct PCM16 samples
   const playPcmBytes = (bytes: Uint8Array, sampleRate: number) => {
+    const count = Math.floor(bytes.byteLength / 2);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const samples = new Float32Array(count);
+    for (let i = 0; i < count; i++) samples[i] = view.getInt16(i * 2, true) / 32768;
+    playFloatSamples(samples, sampleRate);
+  };
+
+  const playFloatSamples = (float32: Float32Array, sampleRate: number) => {
     const audioCtx = audioContextRef.current;
     const gainNode = gainNodeRef.current;
-    if (!audioCtx || !gainNode) return;
-
-    if (audioCtx.state === 'suspended') {
-      audioCtx.resume().catch(() => {});
-    }
-
+    if (!audioCtx || !gainNode || !float32.length) return;
+    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
     try {
-      const alignedLength = bytes.byteLength - (bytes.byteLength % 2);
-      const sampleCount = alignedLength / 2;
-      if (sampleCount === 0) return;
-
-      const pcm16 = new Int16Array(bytes.buffer, bytes.byteOffset, sampleCount);
-      const float32 = new Float32Array(sampleCount);
-      for (let i = 0; i < sampleCount; i++) {
-        float32[i] = pcm16[i] / 32768.0;
-      }
-
+      const sampleCount = float32.length;
       const buffer = audioCtx.createBuffer(1, sampleCount, sampleRate);
       buffer.getChannelData(0).set(float32);
 
@@ -639,29 +681,11 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
       source.buffer = buffer;
       source.connect(gainNode);
 
-      let adaptiveBuffer = MIN_JITTER_BUFFER_SECONDS; // 35ms default
-      if (networkQuality.rttMs !== null) {
-        if (networkQuality.rttMs < 60) {
-          adaptiveBuffer = 0.035;
-        } else if (networkQuality.rttMs < 120) {
-          adaptiveBuffer = 0.060;
-        } else {
-          adaptiveBuffer = 0.095;
-        }
-      }
-      if (droppedAudioChunksRef.current > 0) {
-        adaptiveBuffer = Math.min(0.12, adaptiveBuffer + 0.03);
-      }
-
-      const currentTime = audioCtx.currentTime;
-      const queuedSeconds = nextStartTimeRef.current - currentTime;
-      if (queuedSeconds <= 0 || queuedSeconds > MAX_QUEUED_AUDIO_SECONDS) {
-        nextStartTimeRef.current = currentTime + adaptiveBuffer;
-      }
-
-      const startTime = nextStartTimeRef.current;
-      source.start(startTime);
-      nextStartTimeRef.current = startTime + buffer.duration;
+      const plan = adaptiveBufferRef.current.plan(audioCtx.currentTime, buffer.duration);
+      if (plan.discardQueued) stopQueuedSources();
+      playingSourcesRef.current.add(source);
+      source.onended = () => { playingSourcesRef.current.delete(source); source.disconnect(); };
+      source.start(plan.start);
 
     } catch (e) {
       console.error('[Visitor] Error playing PCM audio chunk:', e);
@@ -812,6 +836,8 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
       wakeLockManager.release();
       backgroundAudioManager.stop();
       closeAudioContext();
+      opusRef.current?.dispose();
+      opusRef.current = null;
       window.speechSynthesis.cancel();
       if (wsRef.current) {
         wsRef.current.onclose = null;
@@ -936,7 +962,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                     onClick={() => handleModeChange('audio')}
                     className={`mode-tab-btn ${audioMode === 'audio' ? 'active' : ''}`}
                   >
-                    <Headphones size={15} /> <span>Audio HD</span>
+                    <Headphones size={15} /> <span>Audio</span>
                   </button>
                   <button
                     type="button"
@@ -1050,7 +1076,7 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                       {status === 'connecting'
                         ? (hasConnectedOnceRef.current
                             ? 'Conservaremos tu sesión y el audio continuará automáticamente.'
-                            : 'Estableciendo conexión de ultra baja latencia...')
+                            : 'Preparando tu conexión…')
                         : isListening
                         ? `El audio se traduce al ${SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.name}.`
                         : 'Activa la audición para empezar a reproducir la traducción.'}
@@ -1195,46 +1221,22 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
           {/* Sidebar */}
           <div className="sidebar-panel">
             <div className="status-card">
-              <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '18px', fontWeight: 600 }}>Información de la Sala</h3>
+              <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '18px', fontWeight: 600 }}>Tu sesión</h3>
 
+              <p className="status-card-description">Sigue la charla a tu manera.</p>
               <div className="status-row">
-                <span className="status-label">Servidor</span>
-                <span className="status-val" style={{ color: 'var(--color-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <CheckCircle2 size={14} /> Cloudflare Edge (Hibernation)
+                <span className="status-label">Conexión</span>
+                <span className="status-val">
+                  <Wifi size={14} /> {status === 'connected' ? 'Conectada' : status === 'connecting' ? 'Conectando…' : 'Reconectando…'}
                 </span>
               </div>
-
               <div className="status-row">
-                <span className="status-label">Audio Stream</span>
-                <span className="status-val" style={{ 
-                  color: 'var(--color-success)',
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '4px',
-                  fontWeight: 600 
-                }}>
-                  <Cpu size={14} /> {audioMode === 'subtitles' ? 'Solo Subtítulos (0 kbps)' : 'Binario VXL1 (16 kHz HD Voice)'}
+                <span className="status-label">Tu experiencia</span>
+                <span className="status-val">
+                  <Headphones size={14} /> {audioMode === 'subtitles' ? 'Solo subtítulos' : 'Audio y subtítulos'}
                 </span>
               </div>
-
-              <div className="status-row">
-                <span className="status-label">Latencia (RTT)</span>
-                <span className="status-val" style={{ 
-                  color: networkQuality.status === 'excellent' || networkQuality.status === 'good' ? 'var(--color-success)' : 'var(--color-secondary)',
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '4px' 
-                }}>
-                  <Wifi size={14} /> {networkQuality.rttMs ? `${networkQuality.rttMs} ms` : 'Midiendo...'}
-                </span>
-              </div>
-
-              <div className="status-row">
-                <span className="status-label">Protección Móvil</span>
-                <span className="status-val" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--color-success)' }}>
-                  <Shield size={14} /> WakeLock + Background
-                </span>
-              </div>
+              <p className="session-listening-tip">Para escuchar, usa audífonos y mantén esta página abierta.</p>
 
               <div className="status-row">
                 <span className="status-label">Idioma de origen</span>
@@ -1243,8 +1245,15 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                 </span>
               </div>
 
+              <div className="status-row">
+                <span className="status-label">Voz de traducción</span>
+                <span className="status-val" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <Volume2 size={14} /> {getVoiceById(roomVoice).name}
+                </span>
+              </div>
+
               <div className="status-row" style={{ alignItems: 'center' }}>
-                <span className="status-label">Tu idioma objetivo</span>
+                <span className="status-label">Tu idioma</span>
                 <div style={{ width: '160px' }}>
                   <GlassSelect
                     value={selectedLanguage}
@@ -1375,10 +1384,10 @@ export const VisitorSession: React.FC<VisitorSessionProps> = ({
                 try { navigator.vibrate?.(10); } catch {}
                 handleModeChange(audioMode === 'audio' ? 'subtitles' : 'audio');
               }}
-              title="Cambiar entre Audio HD y Solo Subtítulos"
+              title="Cambiar entre Audio y Solo Subtítulos"
             >
               {audioMode === 'audio' ? <Globe size={16} /> : <Headphones size={16} />}
-              <span>{audioMode === 'audio' ? 'Subtítulos' : 'Audio HD'}</span>
+              <span>{audioMode === 'audio' ? 'Subtítulos' : 'Audio'}</span>
             </button>
 
             <button

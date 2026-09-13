@@ -21,3 +21,14 @@ declare module 'opusscript' {
 
   export default OpusScript;
 }
+
+declare module '*.cjs' {
+  const createModule: (options: {
+    instantiateWasm: (imports: WebAssembly.Imports, receive: (instance: WebAssembly.Instance) => void) => WebAssembly.Exports;
+  }) => any;
+  export default createModule;
+}
+declare module '*.wasm' {
+  const module: WebAssembly.Module;
+  export default module;
+}

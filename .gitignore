@@ -39,3 +39,6 @@ __pycache__/
 *.py[cod]
 load-test/generated/
 load-test/reports/
+
+# Local integration-test bundles
+.tmp/

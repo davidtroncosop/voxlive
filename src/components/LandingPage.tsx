@@ -283,7 +283,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSelectRole }) => {
                 <span className="modal-step-num">03</span>
                 <div className="modal-step-content">
                   <h4>Voz y Subtítulos en Tiempo Real</h4>
-                  <p>La IA traduce el discurso con latencia ultra-baja (&lt;150ms) en la red global Cloudflare Edge con audio HD.</p>
+                  <p>Escucha la traducción en tu idioma o sigue los subtítulos desde tu teléfono. Usa audífonos para disfrutar la charla.</p>
                 </div>
               </div>
             </div>
